@@ -27,6 +27,7 @@ import org.eclipse.serializer.persistence.types.PersistenceObjectIdProvider;
 import org.eclipse.serializer.persistence.types.PersistenceRootsProvider;
 import org.eclipse.serializer.persistence.types.PersistenceStorer;
 import org.eclipse.serializer.persistence.types.PersistenceStorer.CreationObserver;
+import org.eclipse.serializer.persistence.types.PersistenceTypeDictionaryLoader;
 import org.eclipse.serializer.persistence.types.PersistenceTypeDictionaryManager;
 import org.eclipse.serializer.persistence.types.PersistenceTypeHandlerManager;
 import org.eclipse.serializer.persistence.types.PersistenceTypeIdProvider;
@@ -269,10 +270,15 @@ public interface SerializerFoundation<F extends SerializerFoundation<?>> extends
 		{
 			final PersistenceTypeDictionaryManager newTypeDictionaryManager =
 				PersistenceTypeDictionaryManager.Transient(
-					this.getTypeDictionaryCreator()
+					this.getTypeDictionaryProvider()
 				)
 			;
 			return newTypeDictionaryManager;
+		}
+		
+		@Override
+		protected PersistenceTypeDictionaryLoader ensureTypeDictionaryLoader() {
+			return () -> null;
 		}
 		
 	}
