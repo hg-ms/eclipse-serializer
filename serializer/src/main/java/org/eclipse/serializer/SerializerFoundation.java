@@ -51,6 +51,8 @@ public interface SerializerFoundation<F extends SerializerFoundation<?>> extends
 
 	public F setSerializerTypeInfoStrategyCreator(SerializerTypeInfoStrategyCreator serializerTypeInfoStrategyCreator);
 	
+	public F setInitialTypeDictionary(String typeDictionaryString);
+	
 	public XEnum<Class<?>> getEntityTypes();
 	
 	public F setEntityTypes(XEnum<Class<?>> entityTypes);
@@ -65,6 +67,14 @@ public interface SerializerFoundation<F extends SerializerFoundation<?>> extends
 	public static SerializerFoundation<?> New()
 	{
 		return new SerializerFoundation.Default<>();
+	}
+	
+	public static SerializerFoundation<?> New(String typeDictionaryString)
+	{
+		SerializerFoundation<?> foundation = new SerializerFoundation.Default<>();
+		foundation.setInitialTypeDictionary(typeDictionaryString);
+		
+		return foundation;
 	}
 	
 	
@@ -97,6 +107,15 @@ public interface SerializerFoundation<F extends SerializerFoundation<?>> extends
 			return this.$();
 		}
 	
+		@Override
+		public F setInitialTypeDictionary(String typeDictionaryString)
+		{
+			this.setTypeDictionaryLoader(()->typeDictionaryString);
+			this.ensureTypeDictionaryProvider();
+						
+			return this.$();
+		}
+		
 		@Override
 		public XEnum<Class<?>> getEntityTypes()
 		{
