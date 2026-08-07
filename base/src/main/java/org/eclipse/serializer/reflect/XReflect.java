@@ -17,6 +17,9 @@ package org.eclipse.serializer.reflect;
 import static org.eclipse.serializer.util.X.notEmpty;
 import static org.eclipse.serializer.util.X.notNull;
 
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
@@ -56,6 +59,19 @@ import org.eclipse.serializer.util.X;
  */
 public final class XReflect
 {
+	///////////////////////////////////////////////////////////////////////////
+	// constants //
+	//////////////
+
+	// null on a JVM without value class support (JEP 401). See #isValueClass.
+	private static final MethodHandle CLASS_IS_VALUE = resolveClassIsValue();
+
+
+
+	///////////////////////////////////////////////////////////////////////////
+	// static methods //
+	///////////////////
+
 	public static <T> T defaultInstantiate(final Class<T> type)
 		throws NoSuchMethodRuntimeException, InstantiationRuntimeException
 	{
@@ -272,6 +288,85 @@ public final class XReflect
 	public static boolean isDeclaredEnum(final Class<?> c)
 	{
 		return c != null && c.isEnum();
+	}
+
+	/**
+	 * Tests whether the passed {@link Class} is a value class (JEP 401), i.e. a class whose instances
+	 * have no identity.
+	 * <p>
+	 * Value instances must never be used where identity is required: they cannot be referenced by a
+	 * {@link java.lang.ref.WeakReference} and cannot be synchronized on (both throw
+	 * {@code java.lang.IdentityException}), while {@code ==} and
+	 * {@link System#identityHashCode(Object)} compare their content instead of their identity.
+	 * <p>
+	 * The check is done reflectively via {@code Class#isValue}, since this code is compiled against a
+	 * JDK baseline that does not have that method, yet. On a JVM without value class support, this
+	 * method consistently returns {@literal false}.
+	 *
+	 * @param c the {@link Class} to be tested, may be {@literal null}.
+	 *
+	 * @return whether the passed {@link Class} is a value class.
+	 */
+	public static boolean isValueClass(final Class<?> c)
+	{
+		if(c == null || CLASS_IS_VALUE == null)
+		{
+			return false;
+		}
+
+		try
+		{
+			return (boolean)CLASS_IS_VALUE.invoke(c);
+		}
+		catch(final Throwable t)
+		{
+			// the handle is resolved from and invoked on java.lang.Class, so a failure is unrecoverable.
+			throw new Error("Failed to determine value class state of " + c.getName(), t);
+		}
+	}
+
+	/**
+	 * Tests whether the passed instance is a value instance.
+	 *
+	 * @param instance the instance to be tested, may be {@literal null}.
+	 *
+	 * @return whether the passed instance is an instance of a value class.
+	 *
+	 * @see #isValueClass(Class)
+	 */
+	public static boolean isValueInstance(final Object instance)
+	{
+		return instance != null && isValueClass(instance.getClass());
+	}
+
+	/**
+	 * Whether the runtime supports value classes at all. Useful to skip logic that can only ever
+	 * apply on a value class capable JVM.
+	 *
+	 * @return whether this JVM implements JEP 401.
+	 *
+	 * @see #isValueClass(Class)
+	 */
+	public static boolean isValueClassSupportingRuntime()
+	{
+		return CLASS_IS_VALUE != null;
+	}
+
+	private static MethodHandle resolveClassIsValue()
+	{
+		try
+		{
+			return MethodHandles.publicLookup().findVirtual(
+				Class.class,
+				"isValue",
+				MethodType.methodType(boolean.class)
+			);
+		}
+		catch(final ReflectiveOperationException e)
+		{
+			// no value class support in this JVM.
+			return null;
+		}
 	}
 	
 	public static boolean isSubEnum(final Class<?> c)

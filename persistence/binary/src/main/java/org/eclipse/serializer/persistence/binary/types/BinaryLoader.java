@@ -655,7 +655,17 @@ public interface BinaryLoader extends PersistenceLoader, PersistenceLoadHandler
 				this.putSkipItem(objectId, instance);
 				return true;
 			}
-			
+
+			/* JDK constants are not registry-resident if they are value instances, but their ids are
+			 * still reserved and never resolvable as entities, so they must be resolved arithmetically.
+			 */
+			final Object javaConstant;
+			if((javaConstant = Persistence.resolveJavaConstantInstance(objectId)) != null)
+			{
+				this.putSkipItem(objectId, javaConstant);
+				return true;
+			}
+
 			// reaching here means the reference is really required to be resolved (loaded)
 			return false;
 		}
