@@ -32,6 +32,7 @@ import org.eclipse.serializer.persistence.types.PersistenceRootResolverProvider;
 import org.eclipse.serializer.persistence.types.PersistenceRoots;
 import org.eclipse.serializer.persistence.types.PersistenceStoreHandler;
 import org.eclipse.serializer.reference.Referencing;
+import org.eclipse.serializer.reflect.XReflect;
 import org.eclipse.serializer.typing.KeyValue;
 
 
@@ -303,11 +304,17 @@ extends AbstractBinaryHandlerCustom<PersistenceRoots.Default>
 				final Object rootInstance = rootEntry.value().instance();
 				
 				// instances can be null when either explicitly registered to be null in the refactoring or legacy enum
-				if(rootInstance != null)
+				if(rootInstance != null && !XReflect.isValueInstance(rootInstance))
 				{
+					/* Value instances are deliberately not registered: they have no identity, so the
+					 * registry can neither hold nor find them. Root resolving is unaffected since it
+					 * goes by identifier, and an OID association would be pointless for an instance
+					 * that is indistinguishable from every equal one.
+					 */
+
 					// must be the original identifier, not the potentially re-mapped identifier of the entry!
 					final Long rootObjectId = rootIdMapping.get(rootEntry.key());
-					
+
 					// all live instances are registered for their OID.
 					registry.registerConstant(rootObjectId.longValue(), rootInstance);
 				}

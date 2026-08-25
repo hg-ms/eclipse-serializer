@@ -293,6 +293,12 @@ extends BinaryLegacyTypeHandler.Abstract<T>
 	}
 
 	@Override
+	public boolean isValueClassType()
+	{
+		return this.typeHandler.isValueClassType();
+	}
+
+	@Override
 	public void iterateInstanceReferences(final T instance, final PersistenceFunction iterator)
 	{
 		this.typeHandler.iterateInstanceReferences(instance, iterator);

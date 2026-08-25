@@ -144,6 +144,13 @@ public class PersistenceLegacyTypeHandlerWrapper<D, T> extends PersistenceLegacy
 	{
 		return this.typeHandler.type();
 	}
+
+	@Override
+	public boolean isValueClassType()
+	{
+		// Must pass through all default methods to be a correct wrapper.
+		return this.typeHandler.isValueClassType();
+	}
 	
 	
 	

@@ -259,7 +259,17 @@ public interface BinaryLoader extends PersistenceLoader, PersistenceLoadHandler
 			loadItem.handler = this.lookupTypeHandler(loadItem.getBuildItemTypeId());
 			if((loadItem.existingInstance = this.objectRegistry.lookupObject(loadItem.getBuildItemObjectId())) == null)
 			{
-				loadItem.createdInstance = loadItem.handler.create(loadItem, this);
+				if(loadItem.handler.isValueClassType())
+				{
+					/* A value instance is created from its complete state, including its references,
+					 * which cannot be resolved yet at this point. See #ensureValueInstance.
+					 */
+					loadItem.valueCreationPending = true;
+				}
+				else
+				{
+					loadItem.createdInstance = loadItem.handler.create(loadItem, this);
+				}
 			}
 			
 			// register build item
@@ -306,6 +316,10 @@ public interface BinaryLoader extends PersistenceLoader, PersistenceLoadHandler
 			{
 				return entry.existingInstance;
 			}
+			if(entry.valueCreationPending)
+			{
+				this.ensureValueInstance(entry);
+			}
 			if(entry.createdInstance == null)
 			{
 				return null;
@@ -327,6 +341,41 @@ public interface BinaryLoader extends PersistenceLoader, PersistenceLoadHandler
 
 			// the locally created instance becomes the effective instance for this build.
 			return entry.existingInstance = entry.createdInstance;
+		}
+
+		/**
+		 * Creates a pending value instance, on demand and hence in dependency order: creating it
+		 * resolves its references, which creates every value instance it references first.
+		 * <p>
+		 * Identity instances referenced by it are already created (blank) at this point, which is
+		 * sufficient since only the reference itself is needed, not its state.
+		 * <p>
+		 * A value instance can only ever reference value instances that existed before it, so the
+		 * recursion is finite for consistent data. An inconsistent cycle is detected and reported
+		 * instead of overflowing the stack.
+		 *
+		 * @param entry the build item whose value instance is to be created.
+		 */
+		private void ensureValueInstance(final BinaryLoadItem entry)
+		{
+			if(entry.valueCreationActive)
+			{
+				throw new BinaryPersistenceException(
+					"Cyclic value instance reference detected for objectId " + entry.getBuildItemObjectId()
+					+ " of type " + entry.handler.typeName() + "."
+				);
+			}
+
+			entry.valueCreationActive = true;
+			try
+			{
+				entry.createdInstance = entry.handler.create(entry, this);
+			}
+			finally
+			{
+				entry.valueCreationActive  = false;
+				entry.valueCreationPending = false;
+			}
 		}
 
 		protected void loadReferences(final BinaryLoadItem entry)
@@ -421,6 +470,15 @@ public interface BinaryLoader extends PersistenceLoader, PersistenceLoadHandler
 				if(entry.createdInstance == null || entry.existingInstance != entry.createdInstance)
 				{
 					// skip items, pre-existing / meanwhile-registered instances, deleted enums.
+					continue;
+				}
+
+				/* Value instances have no identity, so the registry can neither hold nor find them.
+				 * They are reconstructed per load instead, which is invisible to the application
+				 * since equal value instances are indistinguishable.
+				 */
+				if(entry.handler.isValueClassType())
+				{
 					continue;
 				}
 

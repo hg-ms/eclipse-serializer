@@ -49,6 +49,7 @@ import org.eclipse.serializer.persistence.types.PersistenceTypeHandlerManager;
 import org.eclipse.serializer.persistence.types.PersistenceTypeInstantiatorProvider;
 import org.eclipse.serializer.persistence.types.PersistenceTypeResolver;
 import org.eclipse.serializer.reference.Referencing;
+import org.eclipse.serializer.reflect.XReflect;
 
 
 public interface BinaryTypeHandlerCreator extends PersistenceTypeHandlerCreator<Binary>
@@ -242,6 +243,31 @@ public interface BinaryTypeHandlerCreator extends PersistenceTypeHandlerCreator<
 			 * 
 			 */
 			
+			/* Value instances cannot be allocated blank and populated afterwards, so they need a
+			 * handler that constructs them from their persisted state. This also covers stateless
+			 * value classes, whose instances must be created by their constructor as well.
+			 *
+			 * Types whose constructor is not accessible (JDK value types in packages that are not
+			 * opened) cannot be handled that way and keep being handled reflectively. That works
+			 * only as long as the memory accessor tolerates it, so those types should get a proper
+			 * custom handler.
+			 */
+			if(XReflect.isValueClass(type)
+				&& !BinaryHandlerGenericValueClass.isConstructorModuleProtected(type, persistableFields)
+			)
+			{
+				return BinaryHandlerGenericValueClass.New(
+					type,
+					this.deriveTypeName(type),
+					persistableFields,
+					persisterFields,
+					this.lengthResolver(),
+					this.eagerStoringFieldEvaluator(),
+					this.fieldHandlerProvider        ,
+					this.switchByteOrder
+				);
+			}
+
 			if(persistableFields.isEmpty())
 			{
 				return this.internalCreateTypeHandlerGenericStateless(type);
