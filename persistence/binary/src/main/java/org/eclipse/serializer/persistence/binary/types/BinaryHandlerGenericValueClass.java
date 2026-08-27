@@ -332,7 +332,46 @@ public final class BinaryHandlerGenericValueClass<T> extends AbstractBinaryHandl
 			i++;
 		}
 
+		validateNoCustomFieldHandlers(type, persistableFields, fieldHandlerProvider, switchByteOrder);
+
 		this.constructor = resolveConstructor(type, toParameterTypes(persistableFields), persistableFields);
+	}
+
+	/**
+	 * Rejects a value class with a custom field handler registered for one of its fields.
+	 * <p>
+	 * A custom field handler is a pair: a storer writing the field's own representation and a setter
+	 * writing the value back <em>into an instance</em>. The second half is not applicable here, since
+	 * a value instance is constructed from its field values rather than populated, so honoring the
+	 * custom representation on the storing side while reading it back generically would silently
+	 * produce wrong values.
+	 */
+	private static void validateNoCustomFieldHandlers(
+		final Class<?>                   type                ,
+		final XGettingEnum<Field>        persistableFields   ,
+		final BinaryFieldHandlerProvider fieldHandlerProvider,
+		final boolean                    switchByteOrder
+	)
+	{
+		for(final Field field : persistableFields)
+		{
+			if(fieldHandlerProvider.lookupFieldStorer(field, false, switchByteOrder) == null
+				&& fieldHandlerProvider.lookupFieldStorer(field, true, switchByteOrder) == null
+				&& fieldHandlerProvider.lookupFieldSetter(field, switchByteOrder) == null
+			)
+			{
+				continue;
+			}
+
+			throw new PersistenceExceptionTypeNotPersistable(type,
+				new BinaryPersistenceException(
+					"Field " + field.getName() + " of value class " + type.getName() + " has a custom field"
+					+ " handler registered, which cannot be applied to a type whose instances are created"
+					+ " by their constructor. Register a custom type handler for " + type.getName()
+					+ " instead."
+				)
+			);
+		}
 	}
 
 	private static Class<?>[] toParameterTypes(final XGettingEnum<Field> persistableFields)

@@ -184,6 +184,23 @@ public interface PersistenceTypeHandler<D, T> extends PersistenceTypeDefinition,
 	public void store(D data, T instance, long objectId, PersistenceStoreHandler<D> handler);
 
 	/**
+	 * Prepares the passed persisted form before anything else reads it, in particular before
+	 * {@link #iterateLoadableReferences} determines which references have to be loaded.
+	 * <p>
+	 * Required by handlers that rewrite the persisted data, e.g. a legacy handler translating an
+	 * outdated layout into the current one: the reference offsets those handlers report belong to
+	 * the rewritten data, so the rewrite may not be deferred to {@link #create}.
+	 * <p>
+	 * The default implementation does nothing.
+	 *
+	 * @param data the persisted form of an instance of the handled type.
+	 */
+	public default void prepareLoadItem(final D data)
+	{
+		// no preparation needed by default.
+	}
+
+	/**
 	 * Allocates and returns a fresh, uninitialized {@code T} from the passed persisted form. The
 	 * returned instance must already be of the right runtime type but does not yet need its fields
 	 * populated &mdash; field population happens in {@link #initializeState} or {@link #updateState}.

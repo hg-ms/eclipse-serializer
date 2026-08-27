@@ -452,6 +452,12 @@ public interface Serializer<M> extends AutoCloseable
 			}
 			
 			@Override
+			public boolean isEagerStoring()
+			{
+				return true;
+			}
+
+			@Override
 			public <T> long apply(final T instance)
 			{
 				return this.applyEager(instance);

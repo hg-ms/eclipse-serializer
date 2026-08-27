@@ -1621,6 +1621,12 @@ public interface BinaryStorer extends PersistenceStorer, PersistenceStoringCallb
 		////////////
 		
 		@Override
+		public final boolean isEagerStoring()
+		{
+			return true;
+		}
+
+		@Override
 		public final <T> long apply(final T instance)
 		{
 			// for a "full" graph storing strategy, the logic is simply to store everything forced.

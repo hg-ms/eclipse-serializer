@@ -127,8 +127,12 @@ extends AbstractBinaryLegacyTypeHandlerTranslating<T>
 	}
 
 	@Override
-	protected T internalCreate(final Binary rawData, final PersistenceLoadHandler handler)
+	public void prepareLoadItem(final Binary rawData)
 	{
+		/* The rewritten data is what #iterateLoadableReferences describes, so the rewrite has to
+		 * happen before any reference is read out of the load item - which rules out doing it in
+		 * #create, whose execution the loader may defer.
+		 */
 		final long entityContentLength = this.typeHandler().membersPersistedLengthMaximum();
 
 		// kept and new header values
@@ -153,11 +157,13 @@ extends AbstractBinaryLegacyTypeHandlerTranslating<T>
 
 		// registered here to ensure deallocating raw memory at the end of the building process. Neither sooner nor later.
 		rawData.registerHelper(directByteBuffer, directByteBuffer);
+	}
 
-		// the current type handler can now create a new instance with correctly rearranged raw values
-		final T instance = this.typeHandler().create(rawData, handler);
-
-		return instance;
+	@Override
+	protected T internalCreate(final Binary rawData, final PersistenceLoadHandler handler)
+	{
+		// the data has been rearranged by #prepareLoadItem, so the current type handler can read it directly.
+		return this.typeHandler().create(rawData, handler);
 	}
 
 	@Override

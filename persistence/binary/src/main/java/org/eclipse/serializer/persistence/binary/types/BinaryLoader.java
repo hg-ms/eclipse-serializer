@@ -257,6 +257,10 @@ public interface BinaryLoader extends PersistenceLoader, PersistenceLoadHandler
 		private void createBuildItem(final BinaryLoadItem loadItem)
 		{
 			loadItem.handler = this.lookupTypeHandler(loadItem.getBuildItemTypeId());
+
+			// must happen before the item's references are read, see PersistenceTypeHandler#prepareLoadItem.
+			loadItem.handler.prepareLoadItem(loadItem);
+
 			if((loadItem.existingInstance = this.objectRegistry.lookupObject(loadItem.getBuildItemObjectId())) == null)
 			{
 				if(loadItem.handler.isValueClassType())

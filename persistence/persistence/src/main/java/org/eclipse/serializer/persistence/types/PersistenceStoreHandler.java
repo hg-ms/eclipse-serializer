@@ -79,6 +79,22 @@ public interface PersistenceStoreHandler<D> extends PersistenceFunction, Storer
 	 */
 	public <T> long applyEager(T instance, PersistenceTypeHandler<D, T> localTypeHandler);
 
+	/**
+	 * Whether this handler stores every encountered instance instead of skipping already known ones.
+	 * <p>
+	 * Relevant to handlers that may skip storing a referent: skipping is only valid while the storing
+	 * logic is lazy, since an eager store's purpose is to reach everything the referent references,
+	 * whether the referent itself needs storing or not.
+	 * <p>
+	 * The default implementation returns {@literal false}.
+	 *
+	 * @return whether every encountered instance is stored.
+	 */
+	public default boolean isEagerStoring()
+	{
+		return false;
+	}
+
 	@Override
 	public void registerCommitListener(PersistenceCommitListener listener);
 

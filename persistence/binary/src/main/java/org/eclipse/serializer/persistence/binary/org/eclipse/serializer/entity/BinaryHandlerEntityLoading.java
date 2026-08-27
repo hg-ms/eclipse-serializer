@@ -118,6 +118,12 @@ public interface BinaryHandlerEntityLoading<T> extends BinaryTypeHandler<T>
 		}
 
 		@Override
+		public void prepareLoadItem(final Binary data)
+		{
+			this.delegate.prepareLoadItem(data);
+		}
+
+		@Override
 		public boolean isValidEntityType(final Class<? extends T> type)
 		{
 			return this.delegate.isValidEntityType(type);
