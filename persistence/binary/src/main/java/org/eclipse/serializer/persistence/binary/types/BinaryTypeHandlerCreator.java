@@ -271,9 +271,10 @@ public interface BinaryTypeHandlerCreator extends PersistenceTypeHandlerCreator<
 				 * immutable instance does not support and only works as long as the memory accessor
 				 * tolerates it. The remedy is a custom handler using the type's public API.
 				 */
-				logger.debug(
+				logger.warn(
 					"Value class {} is handled reflectively: its constructor cannot be made accessible"
-					+ " because its module does not open the package.",
+					+ " because its module does not open the package. Its instances are created blank and"
+					+ " populated, which an immutable instance does not support.",
 					type.getName()
 				);
 			}

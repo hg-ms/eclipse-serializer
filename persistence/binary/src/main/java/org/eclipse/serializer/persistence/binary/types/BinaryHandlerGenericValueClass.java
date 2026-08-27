@@ -19,6 +19,7 @@ import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
+import java.lang.reflect.Parameter;
 
 import org.eclipse.serializer.collections.types.XGettingEnum;
 import org.eclipse.serializer.persistence.binary.exceptions.BinaryPersistenceException;
@@ -28,6 +29,8 @@ import org.eclipse.serializer.persistence.types.PersistenceFieldLengthResolver;
 import org.eclipse.serializer.persistence.types.PersistenceLoadHandler;
 import org.eclipse.serializer.persistence.types.PersistenceTypeDefinitionMemberFieldReflective;
 import org.eclipse.serializer.reflect.XReflect;
+import org.eclipse.serializer.util.logging.Logging;
+import org.slf4j.Logger;
 
 /**
  * Reflective type handler for value classes (JEP 401).
@@ -52,6 +55,14 @@ import org.eclipse.serializer.reflect.XReflect;
  */
 public final class BinaryHandlerGenericValueClass<T> extends AbstractBinaryHandlerReflective<T>
 {
+	///////////////////////////////////////////////////////////////////////////
+	// constants //
+	//////////////
+
+	private final static Logger logger = Logging.getLogger(BinaryHandlerGenericValueClass.class);
+
+
+
 	///////////////////////////////////////////////////////////////////////////
 	// static methods //
 	///////////////////
@@ -124,7 +135,85 @@ public final class BinaryHandlerGenericValueClass<T> extends AbstractBinaryHandl
 		}
 	}
 
-	private static MethodHandle resolveConstructor(final Class<?> type, final Class<?>[] parameterTypes)
+	/**
+	 * Guarantees that the constructor found by parameter types really accepts the fields in their
+	 * declaration order.
+	 * <p>
+	 * Matching by type alone is only unambiguous while all parameter types differ: then there is
+	 * exactly one way to assign the fields to them. As soon as two parameters share a type, a
+	 * constructor declaring them in the opposite order matches just as well and would silently swap
+	 * the two values on every load. Parameter names settle it when the class was compiled with them,
+	 * a record settles it by definition, and without either the type cannot be handled generically.
+	 */
+	private static void validateConstructorOrder(
+		final Class<?>            type             ,
+		final Constructor<?>      constructor      ,
+		final XGettingEnum<Field> persistableFields
+	)
+	{
+		if(type.isRecord() || !hasRepeatedType(constructor.getParameterTypes()))
+		{
+			return;
+		}
+
+		final Parameter[] parameters = constructor.getParameters();
+
+		if(!parameters[0].isNamePresent())
+		{
+			/* Without parameter names the order cannot be checked at all. Rejecting every such type
+			 * would make the common case (a constructor that does list the fields in order) fail, so
+			 * this is reported instead of enforced.
+			 */
+			logger.warn(
+				"Value class {} has several constructor parameters of the same type and was compiled"
+				+ " without parameter names, so it cannot be verified that its constructor accepts the"
+				+ " fields in declaration order. A constructor declaring them in a different order would"
+				+ " silently swap their values. Compile with -parameters or use a record to have this"
+				+ " checked.",
+				type.getName()
+			);
+
+			return;
+		}
+
+		int i = 0;
+		for(final Field field : persistableFields)
+		{
+			final Parameter parameter = parameters[i++];
+			if(!parameter.getName().equals(field.getName()))
+			{
+				throw new PersistenceExceptionTypeNotPersistable(type,
+					new BinaryPersistenceException(
+						"Constructor of value class " + type.getName() + " does not accept the fields in"
+						+ " declaration order: parameter " + (i - 1) + " is named " + parameter.getName()
+						+ " but the field at that position is " + field.getName() + "."
+					)
+				);
+			}
+		}
+	}
+
+	private static boolean hasRepeatedType(final Class<?>[] parameterTypes)
+	{
+		for(int i = 0; i < parameterTypes.length; i++)
+		{
+			for(int j = i + 1; j < parameterTypes.length; j++)
+			{
+				if(parameterTypes[i] == parameterTypes[j])
+				{
+					return true;
+				}
+			}
+		}
+
+		return false;
+	}
+
+	private static MethodHandle resolveConstructor(
+		final Class<?>            type             ,
+		final Class<?>[]          parameterTypes   ,
+		final XGettingEnum<Field> persistableFields
+	)
 	{
 		final Constructor<?> constructor;
 		try
@@ -144,9 +233,11 @@ public final class BinaryHandlerGenericValueClass<T> extends AbstractBinaryHandl
 			);
 		}
 
+		validateConstructorOrder(type, constructor, persistableFields);
+
 		try
 		{
-				/* Pre-adapted to a fixed (Object[])Object shape so creation can use invokeExact instead of
+			/* Pre-adapted to a fixed (Object[])Object shape so creation can use invokeExact instead of
 			 * invokeWithArguments, which would redo the argument conversion on every instance.
 			 */
 			return MethodHandles.lookup().unreflectConstructor(XReflect.setAccessible(constructor))
@@ -234,14 +325,14 @@ public final class BinaryHandlerGenericValueClass<T> extends AbstractBinaryHandl
 		int  i      = 0;
 		for(final PersistenceTypeDefinitionMemberFieldReflective member : storingMembers)
 		{
-			this.readers[i]         = BinaryValueReader.provideReader(member.type(), switchByteOrder);
+			this.readers[i]         = BinaryValueReader.provideReader(member.type());
 			this.readerOffsets[i]   = offset;
 			this.argumentIndices[i] = indexOfField(persistableFields, member.field());
 			offset += member.persistentMinimumLength();
 			i++;
 		}
 
-		this.constructor = resolveConstructor(type, toParameterTypes(persistableFields));
+		this.constructor = resolveConstructor(type, toParameterTypes(persistableFields), persistableFields);
 	}
 
 	private static Class<?>[] toParameterTypes(final XGettingEnum<Field> persistableFields)
