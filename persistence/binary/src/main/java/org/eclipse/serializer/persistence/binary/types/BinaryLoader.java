@@ -473,10 +473,7 @@ public interface BinaryLoader extends PersistenceLoader, PersistenceLoadHandler
 					continue;
 				}
 
-				/* Value instances have no identity, so the registry can neither hold nor find them.
-				 * They are reconstructed per load instead, which is invisible to the application
-				 * since equal value instances are indistinguishable.
-				 */
+				// value items may not be published to the registry, see #isValueClassType.
 				if(entry.handler.isValueClassType())
 				{
 					continue;

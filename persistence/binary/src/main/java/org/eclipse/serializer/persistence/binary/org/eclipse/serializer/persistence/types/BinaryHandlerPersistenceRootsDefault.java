@@ -306,10 +306,8 @@ extends AbstractBinaryHandlerCustom<PersistenceRoots.Default>
 				// instances can be null when either explicitly registered to be null in the refactoring or legacy enum
 				if(rootInstance != null && !XReflect.isValueInstance(rootInstance))
 				{
-					/* Value instances are deliberately not registered: they have no identity, so the
-					 * registry can neither hold nor find them. Root resolving is unaffected since it
-					 * goes by identifier, and an OID association would be pointless for an instance
-					 * that is indistinguishable from every equal one.
+					/* Value instances cannot be registered (see PersistenceTypeHandler#isValueClassType).
+					 * Root resolving is unaffected, it goes by identifier.
 					 */
 
 					// must be the original identifier, not the potentially re-mapped identifier of the entry!

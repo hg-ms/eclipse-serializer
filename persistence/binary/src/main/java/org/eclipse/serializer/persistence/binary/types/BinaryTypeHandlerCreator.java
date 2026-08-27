@@ -248,13 +248,8 @@ public interface BinaryTypeHandlerCreator extends PersistenceTypeHandlerCreator<
 			 */
 			
 			/* Value instances cannot be allocated blank and populated afterwards, so they need a
-			 * handler that constructs them from their persisted state. This also covers stateless
-			 * value classes, whose instances must be created by their constructor as well.
-			 *
-			 * Types whose constructor is not accessible (JDK value types in packages that are not
-			 * opened) cannot be handled that way and keep being handled reflectively. That works
-			 * only as long as the memory accessor tolerates it, so those types should get a proper
-			 * custom handler.
+			 * handler constructing them from their persisted state. That includes stateless ones,
+			 * hence the check before the emptiness shortcut below.
 			 */
 			if(XReflect.isValueClass(type))
 			{
@@ -272,10 +267,9 @@ public interface BinaryTypeHandlerCreator extends PersistenceTypeHandlerCreator<
 					);
 				}
 
-				/* Reported because such a type keeps being created by allocating it blank and writing
-				 * its fields, which is not applicable to an immutable instance and only works as long
-				 * as the memory accessor tolerates it. The remedy is a custom handler using the type's
-				 * public API.
+				/* Reported because such a type keeps being allocated blank and populated, which an
+				 * immutable instance does not support and only works as long as the memory accessor
+				 * tolerates it. The remedy is a custom handler using the type's public API.
 				 */
 				logger.debug(
 					"Value class {} is handled reflectively: its constructor cannot be made accessible"

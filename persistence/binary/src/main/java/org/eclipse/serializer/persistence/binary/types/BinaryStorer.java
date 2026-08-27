@@ -705,10 +705,7 @@ public interface BinaryStorer extends PersistenceStorer, PersistenceStoringCallb
 						continue;
 					}
 
-					/* Value instances have no identity, so the global registry can neither hold nor find
-					 * them. They are stored under a new objectId every time instead, which is invisible
-					 * to the application since equal value instances are indistinguishable.
-					 */
+					// value items may not be merged into the registry, see #isValueClassType.
 					if(e.typeHandler != null && e.typeHandler.isValueClassType())
 					{
 						continue;
