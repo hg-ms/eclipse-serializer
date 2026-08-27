@@ -16,6 +16,7 @@ package org.eclipse.serializer.persistence.binary.types;
 
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 
@@ -145,7 +146,13 @@ public final class BinaryHandlerGenericValueClass<T> extends AbstractBinaryHandl
 
 		try
 		{
-			return MethodHandles.lookup().unreflectConstructor(XReflect.setAccessible(constructor));
+				/* Pre-adapted to a fixed (Object[])Object shape so creation can use invokeExact instead of
+			 * invokeWithArguments, which would redo the argument conversion on every instance.
+			 */
+			return MethodHandles.lookup().unreflectConstructor(XReflect.setAccessible(constructor))
+				.asSpreader(Object[].class, parameterTypes.length)
+				.asType(MethodType.methodType(Object.class, Object[].class))
+			;
 		}
 		catch(final IllegalAccessException e)
 		{
@@ -285,12 +292,18 @@ public final class BinaryHandlerGenericValueClass<T> extends AbstractBinaryHandl
 		{
 			// cast safety guaranteed by the constructor being the handled type's own.
 			@SuppressWarnings("unchecked")
-			final T instance = (T)this.constructor.invokeWithArguments(arguments);
+			final T instance = (T)this.constructor.invokeExact(arguments);
 
 			return instance;
 		}
 		catch(final Throwable t)
 		{
+			// a failure of the JVM itself is none of this handler's business.
+			if(t instanceof Error)
+			{
+				throw (Error)t;
+			}
+
 			/* A value class constructor validating its arguments can legitimately reject persisted
 			 * state, e.g. when a field was added and the missing value is defaulted by a mapping.
 			 */

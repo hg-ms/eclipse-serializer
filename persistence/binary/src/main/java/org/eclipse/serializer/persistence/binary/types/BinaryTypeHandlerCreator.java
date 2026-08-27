@@ -50,6 +50,8 @@ import org.eclipse.serializer.persistence.types.PersistenceTypeInstantiatorProvi
 import org.eclipse.serializer.persistence.types.PersistenceTypeResolver;
 import org.eclipse.serializer.reference.Referencing;
 import org.eclipse.serializer.reflect.XReflect;
+import org.eclipse.serializer.util.logging.Logging;
+import org.slf4j.Logger;
 
 
 public interface BinaryTypeHandlerCreator extends PersistenceTypeHandlerCreator<Binary>
@@ -114,6 +116,8 @@ public interface BinaryTypeHandlerCreator extends PersistenceTypeHandlerCreator<
 		// instance fields //
 		////////////////////
 		
+		private final static Logger logger = Logging.getLogger(BinaryTypeHandlerCreator.class);
+
 		final PersistenceTypeInstantiatorProvider<Binary>        instantiatorProvider    ;
 		final Referencing<PersistenceTypeHandlerManager<Binary>> typeHandlerManager      ;
 		final boolean                                            switchByteOrder         ;
@@ -252,21 +256,34 @@ public interface BinaryTypeHandlerCreator extends PersistenceTypeHandlerCreator<
 			 * only as long as the memory accessor tolerates it, so those types should get a proper
 			 * custom handler.
 			 */
-			if(XReflect.isValueClass(type)
-				&& !BinaryHandlerGenericValueClass.isConstructorModuleProtected(type, persistableFields)
-			)
+			if(XReflect.isValueClass(type))
 			{
-				return BinaryHandlerGenericValueClass.New(
-					type,
-					this.deriveTypeName(type),
-					persistableFields,
-					persisterFields,
-					this.lengthResolver(),
-					this.eagerStoringFieldEvaluator(),
-					this.fieldHandlerProvider        ,
-					this.switchByteOrder
+				if(!BinaryHandlerGenericValueClass.isConstructorModuleProtected(type, persistableFields))
+				{
+					return BinaryHandlerGenericValueClass.New(
+						type,
+						this.deriveTypeName(type),
+						persistableFields,
+						persisterFields,
+						this.lengthResolver(),
+						this.eagerStoringFieldEvaluator(),
+						this.fieldHandlerProvider        ,
+						this.switchByteOrder
+					);
+				}
+
+				/* Reported because such a type keeps being created by allocating it blank and writing
+				 * its fields, which is not applicable to an immutable instance and only works as long
+				 * as the memory accessor tolerates it. The remedy is a custom handler using the type's
+				 * public API.
+				 */
+				logger.debug(
+					"Value class {} is handled reflectively: its constructor cannot be made accessible"
+					+ " because its module does not open the package.",
+					type.getName()
 				);
 			}
+
 
 			if(persistableFields.isEmpty())
 			{

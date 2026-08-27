@@ -194,7 +194,15 @@ public interface PersistenceLegacyTypeHandlerCreator<D>
 				return this.createTypeHandlerUnchangedInstanceStructure(result);
 			}
 			
-			if(result.currentTypeHandler() instanceof PersistenceTypeHandlerReflective<?, ?>)
+			/* A value class handler is reflective in how it derives its members, but its instances
+			 * cannot be created empty and populated afterwards: it builds them from the persisted
+			 * values in #create. The reflective legacy branch would hand it the LEGACY layout there
+			 * and then populate fields, so such a handler has to take the rerouting branch, which
+			 * rewrites the data into the current layout first.
+			 */
+			if(result.currentTypeHandler() instanceof PersistenceTypeHandlerReflective<?, ?>
+				&& !result.currentTypeHandler().isValueClassType()
+			)
 			{
 				final PersistenceLegacyTypeHandler<D, T> reflectiveHandler = this.deriveReflectiveHandler(
 					result,

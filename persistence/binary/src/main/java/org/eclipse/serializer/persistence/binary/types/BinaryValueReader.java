@@ -51,50 +51,68 @@ public interface BinaryValueReader
 	 */
 	public static BinaryValueReader provideReader(final Class<?> type, final boolean switchByteOrder)
 	{
-		if(switchByteOrder)
-		{
-			// (07.08.2026 TM)TODO: reversed byte order reading for constructor-based instantiation
-			throw new BinaryPersistenceException(
-				"Constructor-based instantiation does not support switched byte order, yet."
-			);
-		}
-
 		if(!type.isPrimitive())
 		{
-			return (data, offset, handler) -> handler.lookupObject(data.read_long(offset));
+			// object ids are read as a whole, so only their byte order has to be corrected.
+			return switchByteOrder
+				? (data, offset, handler) -> handler.lookupObject(Long.reverseBytes(data.read_long(offset)))
+				: (data, offset, handler) -> handler.lookupObject(data.read_long(offset))
+			;
 		}
 
 		if(type == int.class)
 		{
-			return (data, offset, handler) -> Integer.valueOf(data.read_int(offset));
+			return switchByteOrder
+				? (data, offset, handler) -> Integer.valueOf(Integer.reverseBytes(data.read_int(offset)))
+				: (data, offset, handler) -> Integer.valueOf(data.read_int(offset))
+			;
 		}
 		if(type == long.class)
 		{
-			return (data, offset, handler) -> Long.valueOf(data.read_long(offset));
+			return switchByteOrder
+				? (data, offset, handler) -> Long.valueOf(Long.reverseBytes(data.read_long(offset)))
+				: (data, offset, handler) -> Long.valueOf(data.read_long(offset))
+			;
 		}
 		if(type == boolean.class)
 		{
+			// a single byte has no byte order.
 			return (data, offset, handler) -> Boolean.valueOf(data.read_boolean(offset));
-		}
-		if(type == double.class)
-		{
-			return (data, offset, handler) -> Double.valueOf(data.read_double(offset));
-		}
-		if(type == char.class)
-		{
-			return (data, offset, handler) -> Character.valueOf(data.read_char(offset));
 		}
 		if(type == byte.class)
 		{
+			// a single byte has no byte order.
 			return (data, offset, handler) -> Byte.valueOf(data.read_byte(offset));
 		}
-		if(type == short.class)
+		if(type == double.class)
 		{
-			return (data, offset, handler) -> Short.valueOf(data.read_short(offset));
+			return switchByteOrder
+				? (data, offset, handler) -> Double.valueOf(
+					Double.longBitsToDouble(Long.reverseBytes(Double.doubleToRawLongBits(data.read_double(offset)))))
+				: (data, offset, handler) -> Double.valueOf(data.read_double(offset))
+			;
 		}
 		if(type == float.class)
 		{
-			return (data, offset, handler) -> Float.valueOf(data.read_float(offset));
+			return switchByteOrder
+				? (data, offset, handler) -> Float.valueOf(
+					Float.intBitsToFloat(Integer.reverseBytes(Float.floatToRawIntBits(data.read_float(offset)))))
+				: (data, offset, handler) -> Float.valueOf(data.read_float(offset))
+			;
+		}
+		if(type == char.class)
+		{
+			return switchByteOrder
+				? (data, offset, handler) -> Character.valueOf(Character.reverseBytes(data.read_char(offset)))
+				: (data, offset, handler) -> Character.valueOf(data.read_char(offset))
+			;
+		}
+		if(type == short.class)
+		{
+			return switchByteOrder
+				? (data, offset, handler) -> Short.valueOf(Short.reverseBytes(data.read_short(offset)))
+				: (data, offset, handler) -> Short.valueOf(data.read_short(offset))
+			;
 		}
 
 		throw new BinaryPersistenceException("Unhandled primitive type: " + type.getName());

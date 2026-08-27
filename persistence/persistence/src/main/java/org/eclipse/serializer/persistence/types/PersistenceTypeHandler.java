@@ -187,6 +187,16 @@ public interface PersistenceTypeHandler<D, T> extends PersistenceTypeDefinition,
 	 * Allocates and returns a fresh, uninitialized {@code T} from the passed persisted form. The
 	 * returned instance must already be of the right runtime type but does not yet need its fields
 	 * populated &mdash; field population happens in {@link #initializeState} or {@link #updateState}.
+	 * <p>
+	 * <b>References must not be resolved here.</b> This method is called for every entity of a load
+	 * before any of them is populated, so {@link PersistenceLoadHandler#lookupObject} would return
+	 * {@literal null} for anything not yet created. Resolving a reference is only valid from
+	 * {@link #initializeState} / {@link #updateState} onwards.
+	 * <p>
+	 * The one exception is a handler reporting {@link #isValueClassType()}: its instances cannot be
+	 * created uninitialized, so it does resolve its references here and the loader defers its
+	 * creation until they can be resolved. That deferral only works because no other handler
+	 * resolves references in this method.
 	 *
 	 * @param data    the persisted form to read identity-information from.
 	 * @param handler receives nested-reference resolution requests.
