@@ -114,6 +114,19 @@ public final class BinaryHandlerLazyDefault extends AbstractBinaryHandlerCustom<
 				handler.noteTrustedReference(referenceOid);
 			}
 		}
+		else if(Swizzling.isFoundId(instance.objectId())
+			&& XReflect.isValueInstance(referent)
+			&& instance.$getLoader() == handler.getObjectRetriever()
+		)
+		{
+			/* A value instance has no identity, so applying it would assign a new objectId on every
+			 * store and invalidate the existing link. That is unnecessary: the referent is immutable,
+			 * so the entity the link points to can never become stale. The established link is kept
+			 * and the referent is referenced instead of stored again, exactly like an unloaded one.
+			 */
+			referenceOid = instance.objectId();
+			handler.noteTrustedReference(referenceOid);
+		}
 		else
 		{
 			// OID validation or updating is done by linking logic
