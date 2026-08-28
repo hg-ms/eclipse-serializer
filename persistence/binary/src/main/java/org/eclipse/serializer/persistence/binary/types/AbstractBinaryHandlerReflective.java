@@ -213,12 +213,19 @@ implements PersistenceTypeHandlerReflective<Binary, T>
 				}
 
 				storers[i++] = BinaryValueStructFunctions.provideStorer(
-					struct.members(), struct.persistentMinimumLength(), switchByteOrder
+					struct.field(), struct.members(), struct.persistentMinimumLength(), switchByteOrder
 				);
 			}
 			else if (customFieldStorer != null)
 			{
 				storers[i++] = customFieldStorer;
+			}
+			else if(XReflect.isValueClass(member.type()))
+			{
+				// a value may be laid out inside its owner, where its offset holds no object reference
+				storers[i++] = BinaryValueHandleFunctions.provideReferenceStorer(
+					member.field(), isEager, switchByteOrder
+				);
 			}
 			else
 			{
@@ -472,6 +479,11 @@ implements PersistenceTypeHandlerReflective<Binary, T>
 		{
 			return customFieldSetter;
 		}
+		else if(XReflect.isValueClass(member.type()))
+		{
+			// a value may be laid out inside its owner, where its offset holds no object reference
+			return BinaryValueHandleFunctions.provideReferenceSetter(member.field(), this.isSwitchedByteOrder());
+		}
 		else
 		{
 			return BinaryValueFunctions.getObjectValueSetter(member.type(), this.isSwitchedByteOrder());
@@ -495,6 +507,7 @@ implements PersistenceTypeHandlerReflective<Binary, T>
 		}
 
 		return BinaryValueStructFunctions.provideSetter(
+			member.field()                  ,
 			member.type()                   ,
 			member.members()                ,
 			declarationOrder                ,

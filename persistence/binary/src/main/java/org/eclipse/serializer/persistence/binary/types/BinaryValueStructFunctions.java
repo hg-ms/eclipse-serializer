@@ -19,6 +19,7 @@ import static org.eclipse.serializer.persistence.types.PersistenceTypeDescriptio
 import static org.eclipse.serializer.persistence.types.PersistenceTypeDescriptionMemberFieldValueStruct.NULL_MARKER_PRESENT;
 
 import java.lang.invoke.MethodHandle;
+import java.lang.invoke.VarHandle;
 import java.lang.reflect.Field;
 
 import org.eclipse.serializer.collections.HashEnum;
@@ -55,6 +56,7 @@ public final class BinaryValueStructFunctions
 	/**
 	 * Creates the storer writing an inlined field into its owner's binary form.
 	 *
+	 * @param ownerField      the owner field holding the inlined value; must not be {@code null}.
 	 * @param members         the inlined layout's members, in persistent order.
 	 * @param structLength    the slot's fixed length, including the null marker.
 	 * @param switchByteOrder whether the persistent form uses the reversed byte order.
@@ -62,6 +64,7 @@ public final class BinaryValueStructFunctions
 	 * @return the storer for the inlined field.
 	 */
 	public static BinaryValueStorer provideStorer(
+		final Field                                                            ownerField     ,
 		final XGettingSequence<? extends PersistenceTypeDefinitionMemberField> members        ,
 		final long                                                             structLength   ,
 		final boolean                                                          switchByteOrder
@@ -80,12 +83,18 @@ public final class BinaryValueStructFunctions
 			i++;
 		}
 
-		return new StructStorer(storers, offsets, structLength);
+		return new StructStorer(
+			BinaryValueHandleFunctions.provideVarHandle(ownerField),
+			storers,
+			offsets,
+			structLength
+		);
 	}
 
 	/**
 	 * Creates the setter reading an inlined field out of its owner's binary form.
 	 *
+	 * @param ownerField        the owner field holding the inlined value; must not be {@code null}.
 	 * @param valueType         the inlined type; must not be {@code null}.
 	 * @param members           the inlined layout's members, in persistent order.
 	 * @param declarationOrder  the inlined type's persistable fields in declaration order, which is the order
@@ -96,6 +105,7 @@ public final class BinaryValueStructFunctions
 	 * @return the setter for the inlined field.
 	 */
 	public static BinaryValueSetter provideSetter(
+		final Field                                                            ownerField      ,
 		final Class<?>                                                         valueType       ,
 		final XGettingSequence<? extends PersistenceTypeDefinitionMemberField> members         ,
 		final XGettingEnum<Field>                                              declarationOrder,
@@ -132,7 +142,15 @@ public final class BinaryValueStructFunctions
 			declarationOrder
 		);
 
-		return new StructSetter(valueType, readers, targets, constructor, declarationOrder.intSize(), structLength);
+		return new StructSetter(
+			BinaryValueHandleFunctions.provideVarHandle(ownerField),
+			valueType,
+			readers,
+			targets,
+			constructor,
+			declarationOrder.intSize(),
+			structLength
+		);
 	}
 
 	/**
@@ -179,6 +197,7 @@ public final class BinaryValueStructFunctions
 		}
 
 		return provideSetter(
+			member.field()                  ,
 			valueType                       ,
 			member.members()                ,
 			declarationOrder                ,
@@ -371,13 +390,20 @@ public final class BinaryValueStructFunctions
 
 	private static final class StructStorer implements BinaryValueStorer
 	{
+		private final VarHandle           ownerHandle ;
 		private final BinaryValueStorer[] storers     ;
 		private final long[]              offsets     ;
 		private final long                structLength;
 
-		StructStorer(final BinaryValueStorer[] storers, final long[] offsets, final long structLength)
+		StructStorer(
+			final VarHandle           ownerHandle ,
+			final BinaryValueStorer[] storers     ,
+			final long[]              offsets     ,
+			final long                structLength
+		)
 		{
 			super();
+			this.ownerHandle  = ownerHandle ;
 			this.storers      = storers     ;
 			this.offsets      = offsets     ;
 			this.structLength = structLength;
@@ -391,7 +417,8 @@ public final class BinaryValueStructFunctions
 			final PersistenceStoreHandler<Binary> persister
 		)
 		{
-			final Object value = XMemory.getObject(source, sourceOffset);
+			// reached through a handle: a value may be laid out inside its owner, with no reference at its offset
+			final Object value = this.ownerHandle.get(source);
 			if(value == null)
 			{
 				// zeroed rather than skipped, so the slot's content never depends on what was there before
@@ -414,6 +441,7 @@ public final class BinaryValueStructFunctions
 
 	private static final class StructSetter implements BinaryValueSetter
 	{
+		private final VarHandle      ownerHandle  ;
 		private final Class<?>       valueType    ;
 		private final StructReader[] readers      ;
 		private final int[]          targets      ;
@@ -422,6 +450,7 @@ public final class BinaryValueStructFunctions
 		private final long           structLength ;
 
 		StructSetter(
+			final VarHandle      ownerHandle  ,
 			final Class<?>       valueType    ,
 			final StructReader[] readers      ,
 			final int[]          targets      ,
@@ -431,6 +460,7 @@ public final class BinaryValueStructFunctions
 		)
 		{
 			super();
+			this.ownerHandle   = ownerHandle  ;
 			this.valueType     = valueType    ;
 			this.readers       = readers      ;
 			this.targets       = targets      ;
@@ -449,7 +479,7 @@ public final class BinaryValueStructFunctions
 		{
 			if(XMemory.get_byte(srcAddress) == NULL_MARKER_ABSENT)
 			{
-				XMemory.setObject(target, trgOffset, null);
+				this.ownerHandle.set(target, null);
 				return srcAddress + this.structLength;
 			}
 
@@ -461,7 +491,7 @@ public final class BinaryValueStructFunctions
 				address += this.readers[i].readValue(address, args, this.targets[i]);
 			}
 
-			XMemory.setObject(target, trgOffset, this.createValue(args));
+			this.ownerHandle.set(target, this.createValue(args));
 
 			return address;
 		}

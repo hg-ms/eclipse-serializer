@@ -309,7 +309,11 @@ public final class XReflect
 	 */
 	public static boolean isValueClass(final Class<?> c)
 	{
-		if(c == null || CLASS_IS_VALUE == null)
+		/* A primitive reports itself as a value type, which it is, but it is not a value class: it has no
+		 * declaration, no fields and no constructor, so none of what callers ask this question for applies
+		 * to it.
+		 */
+		if(c == null || c.isPrimitive() || CLASS_IS_VALUE == null)
 		{
 			return false;
 		}
