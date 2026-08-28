@@ -133,7 +133,25 @@ implements PersistenceTypeHandlerReflective<Binary, T>
 			inlinedMembers.add(declaredField(inlinedField, lengthResolver));
 		}
 
-		return PersistenceTypeDefinitionMemberFieldValueStruct.New(field, inlinedMembers);
+		final PersistenceTypeDefinitionMemberFieldValueStruct member =
+			PersistenceTypeDefinitionMemberFieldValueStruct.New(field, inlinedMembers)
+		;
+
+		if(member.hasReferences())
+		{
+			/* An inlined slot is a fixed-length non-reference member, which is what lets the storage engine
+			 * skip it as it skips a primitive. An object id inside one would be skipped along with it, so
+			 * the garbage collector would never see the entity it points to and would collect it while it is
+			 * still referenced. Nothing downstream can detect that, so the field is refused here rather than
+			 * written in a form that cannot be traversed.
+			 */
+			throw new PersistenceExceptionTypeConsistency(
+				"Field " + member.identifier() + " cannot be inlined: " + field.getType().getName()
+				+ " holds references, and an inlined slot must not."
+			);
+		}
+
+		return member;
 	}
 	
 	protected static final EqConstHashEnum<PersistenceTypeDefinitionMemberFieldReflective> filter(

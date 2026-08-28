@@ -22,22 +22,39 @@ import java.util.function.BiPredicate;
 import org.eclipse.serializer.collections.HashEnum;
 import org.eclipse.serializer.collections.types.XGettingEnum;
 import org.eclipse.serializer.reflect.XReflect;
+import org.eclipse.serializer.util.logging.Logging;
+import org.slf4j.Logger;
 
 /**
  * Decides whether an owner's field is written into the owner's own binary form instead of being referenced
  * by an object id, and supplies the inlined type's fields when it is.
  * <p>
- * Inlining removes one entity per owner, which is what an identity-less field type would otherwise cost on
- * every store of the owner: it has no object registry entry, so it is assigned a new object id and stored
- * again each time, leaving a superseded copy behind. In exchange the owner's persistent layout embeds the
- * inlined type's layout, which makes evolving that type an evolution of every owner. That trade is the
- * caller's to make, so inlining is opt-in and off by default.
+ * An object id is a persistent identity, and a value has none, so referencing one says something about it
+ * that is not true. The cost follows from that: with no object registry entry the field is assigned a new
+ * object id and stored again on every store of its owner, leaving a superseded copy behind each time.
+ * Writing it into the owner instead is the representation that matches what it is, which is why
+ * {@link #New(PersistenceTypeAnalyzer)} is the default.
+ * <p>
+ * It cannot be the only representation. A field declared as {@code Object} or as an interface, and every
+ * collection element, has no static type to inline against, and an inlined slot carries no type of its own.
+ * Those keep the referenced form, so the two coexist within one owner.
+ * <p>
+ * What it costs is evolution: the owner's layout embeds the inlined type's layout, so changing that type
+ * changes every owner that inlines it.
  *
  * @see PersistenceTypeDescriptionMemberFieldValueStruct
  */
 @FunctionalInterface
 public interface PersistenceValueInliningResolver
 {
+	///////////////////////////////////////////////////////////////////////////
+	// constants //
+	//////////////
+
+	static final Logger logger = Logging.getLogger(PersistenceValueInliningResolver.class);
+
+
+
 	/**
 	 * Decides whether the passed field is inlined into its owner.
 	 *
@@ -49,11 +66,72 @@ public interface PersistenceValueInliningResolver
 	public XGettingEnum<Field> resolveInlinedFields(Class<?> ownerType, Field field);
 
 	/**
-	 * @return a resolver that inlines nothing, which is the default.
+	 * @return a resolver that inlines nothing.
 	 */
 	public static PersistenceValueInliningResolver Disabled()
 	{
 		return (ownerType, field) -> null;
+	}
+
+	/**
+	 * Creates the default resolver: it inlines every eligible field whose type the application itself
+	 * declares, and leaves the types the JDK declares referenced.
+	 * <p>
+	 * A JDK value type is excluded because its persistent form is not ours to decide. Several have custom
+	 * type handlers, and the cached instances among them are persisted under reserved constant ids
+	 * ({@link Persistence}); inlining would bypass both. Opting one in is possible through
+	 * {@link #New(PersistenceTypeAnalyzer, BiPredicate)}, but it changes the layout of every owner that
+	 * has such a field, so it is a decision to take deliberately.
+	 *
+	 * @param typeAnalyzer the analyzer determining a type's persistable fields; must not be {@code null}.
+	 *
+	 * @return the new resolver.
+	 */
+	public static PersistenceValueInliningResolver New(final PersistenceTypeAnalyzer typeAnalyzer)
+	{
+		return New(typeAnalyzer, (ownerType, field) -> isApplicationDeclared(field.getType()));
+	}
+
+	/**
+	 * @param type the type to test.
+	 *
+	 * @return whether the type is declared by the application rather than by the JDK.
+	 */
+	public static boolean isApplicationDeclared(final Class<?> type)
+	{
+		final ClassLoader loader = type.getClassLoader();
+
+		return loader != null && loader != ClassLoader.getPlatformClassLoader();
+	}
+
+	/**
+	 * @return whether the type has a constructor accepting the passed fields that can actually be invoked.
+	 */
+	static boolean isConstructorInvocable(final Class<?> type, final XGettingEnum<Field> fields)
+	{
+		final Class<?>[] parameterTypes = new Class<?>[fields.intSize()];
+
+		int i = 0;
+		for(final Field field : fields)
+		{
+			parameterTypes[i++] = field.getType();
+		}
+
+		try
+		{
+			return type.getDeclaredConstructor(parameterTypes).trySetAccessible();
+		}
+		catch(final NoSuchMethodException e)
+		{
+			return false;
+		}
+	}
+
+	static XGettingEnum<Field> decline(final Field field, final String reason)
+	{
+		logger.debug("Field {} is not inlined: {}", field, reason);
+
+		return null;
 	}
 
 	/**
@@ -118,9 +196,15 @@ public interface PersistenceValueInliningResolver
 		{
 			final Class<?> valueType = field.getType();
 
-			if(!XReflect.isValueClass(valueType) || !this.selector.test(ownerType, field))
+			if(!XReflect.isValueClass(valueType))
 			{
+				// not a value class, so there is nothing to decide and nothing worth reporting
 				return null;
+			}
+
+			if(!this.selector.test(ownerType, field))
+			{
+				return decline(field, "not selected for inlining");
 			}
 
 			final HashEnum<Field> persistable = HashEnum.New();
@@ -130,7 +214,7 @@ public interface PersistenceValueInliningResolver
 
 			if(!persister.isEmpty() || !problematic.isEmpty())
 			{
-				return null;
+				return decline(field, valueType.getName() + " has persister or problematic fields");
 			}
 
 			for(final Field valueField : persistable)
@@ -138,8 +222,16 @@ public interface PersistenceValueInliningResolver
 				if(!valueField.getType().isPrimitive())
 				{
 					// an inlined reference would need reachability handling the storage engine cannot see
-					return null;
+					return decline(field, valueType.getName() + " holds references");
 				}
+			}
+
+			if(!isConstructorInvocable(valueType, persistable))
+			{
+				/* The inlined instance is constructed rather than populated, so a constructor that cannot be
+				 * reached would only fail later, when the handler is built.
+				 */
+				return decline(field, valueType.getName() + " has no reachable constructor for its fields");
 			}
 
 			return persistable;

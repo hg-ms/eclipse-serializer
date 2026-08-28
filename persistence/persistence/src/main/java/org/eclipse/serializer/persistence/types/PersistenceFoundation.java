@@ -438,7 +438,8 @@ extends Cloneable<PersistenceFoundation<D, F>>,
 
 	/**
 	 * Sets the resolver deciding which fields are written into their owner instead of being referenced by an
-	 * object id. Inlining changes the persistent layout of every owner, so it is off unless set here.
+	 * object id. The default inlines every eligible field of an application-declared value type; pass
+	 * {@link PersistenceValueInliningResolver#Disabled()} to keep every value field referenced.
 	 *
 	 * @param resolver the resolver to use.
 	 *
@@ -2455,7 +2456,7 @@ extends Cloneable<PersistenceFoundation<D, F>>,
 		
 		protected PersistenceValueInliningResolver ensureValueInliningResolver()
 		{
-			return PersistenceValueInliningResolver.Disabled();
+			return PersistenceValueInliningResolver.New(this.getTypeAnalyzer());
 		}
 
 		protected PersistenceEagerStoringFieldEvaluator ensureReferenceFieldEagerEvaluator()
