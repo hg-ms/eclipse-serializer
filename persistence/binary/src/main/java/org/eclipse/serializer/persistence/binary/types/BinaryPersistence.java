@@ -86,6 +86,7 @@ import org.eclipse.serializer.persistence.binary.java.util.BinaryHandlerLinkedHa
 import org.eclipse.serializer.persistence.binary.java.util.BinaryHandlerLinkedHashSet;
 import org.eclipse.serializer.persistence.binary.java.util.BinaryHandlerLinkedList;
 import org.eclipse.serializer.persistence.binary.java.util.BinaryHandlerLocale;
+import org.eclipse.serializer.persistence.binary.java.util.BinaryHandlerOptional;
 import org.eclipse.serializer.persistence.binary.java.util.BinaryHandlerOptionalDouble;
 import org.eclipse.serializer.persistence.binary.java.util.BinaryHandlerOptionalInt;
 import org.eclipse.serializer.persistence.binary.java.util.BinaryHandlerOptionalLong;
@@ -420,8 +421,10 @@ public final class BinaryPersistence extends Persistence
 				
 				BinaryHandlerLazyDefault.New(),
 
-				// the way Optional is implemented, only a generically (low-level) working handler can handle it correctly
-				typeHandlerCreator.createTypeHandlerGeneric(Optional.class)
+				/* Optional holds its content in a single reference. A generic handler would create it empty
+				 * and populate it afterwards, which does not take on a value class.
+				 */
+				BinaryHandlerOptional.New()
 		);
 
 		return nativeHandlers;
