@@ -1425,13 +1425,44 @@ public abstract class Binary implements Chunk
 		final int                 arrayLength
 	)
 	{
+		this.storeReferences(typeId, objectId, binaryOffset, persister, array, arrayOffset, arrayLength, null);
+	}
+
+	/**
+	 * Variant of
+	 * {@link #storeReferences(long, long, long, PersistenceFunction, Object[], int, int)} that can
+	 * reference elements by the object id a previous store assigned to them.
+	 *
+	 * @param typeId        the entity's type id.
+	 * @param objectId      the entity's object id.
+	 * @param binaryOffset  the offset to write the reference list at.
+	 * @param persister     the persister to apply not-cached elements to.
+	 * @param array         the elements to be referenced.
+	 * @param arrayOffset   the first element's index.
+	 * @param arrayLength   the number of elements.
+	 * @param objectIdCache one id per element, {@link Swizzling#notFoundId()} where none is cached.
+	 *                      Assigned ids are written back into it. May be {@literal null}.
+	 *
+	 * @see #storeReferencesAsList(long, PersistenceFunction, Object[], int, int, long[])
+	 */
+	public final void storeReferences(
+		final long                typeId       ,
+		final long                objectId     ,
+		final long                binaryOffset ,
+		final PersistenceFunction persister    ,
+		final Object[]            array        ,
+		final int                 arrayOffset  ,
+		final int                 arrayLength  ,
+		final long[]              objectIdCache
+	)
+	{
 		this.storeEntityHeader(
 			binaryOffset + calculateReferenceListTotalBinaryLength(arrayLength),
 			typeId,
 			objectId
 		);
 
-		this.storeReferencesAsList(binaryOffset, persister, array, arrayOffset, arrayLength);
+		this.storeReferencesAsList(binaryOffset, persister, array, arrayOffset, arrayLength, objectIdCache);
 	}
 	
 	public final void storeFixedSize(
@@ -1833,12 +1864,40 @@ public abstract class Binary implements Chunk
 		final Object[]               target
 	)
 	{
+		return this.collectElementsIntoArray(binaryOffset, handler, target, null);
+	}
+
+	/**
+	 * Variant of {@link #collectElementsIntoArray(long, PersistenceLoadHandler, Object[])} that also
+	 * reports the object id each element was resolved from, so a later store can reference the
+	 * unchanged ones by id instead of storing them again.
+	 *
+	 * @param binaryOffset  the offset of the list to read.
+	 * @param handler       the load handler resolving the ids.
+	 * @param target        the array to collect the elements into.
+	 * @param objectIdCache receives one id per element. May be {@literal null}.
+	 *
+	 * @return the number of non-null elements.
+	 *
+	 * @see #storeReferencesAsList(long, PersistenceFunction, Object[], int, int, long[])
+	 */
+	public final long collectElementsIntoArray(
+		final long                   binaryOffset ,
+		final PersistenceLoadHandler handler      ,
+		final Object[]               target       ,
+		final long[]                 objectIdCache
+	)
+	{
 		long nonNullCount = 0L;
-		
+
 		final long binaryElementsStartAddress = this.binaryListElementsAddress(binaryOffset);
 		for(int i = 0; i < target.length; i++)
 		{
 			final long oid = this.get_longFromAddress(binaryElementsStartAddress + referenceBinaryLength(i));
+			if(objectIdCache != null)
+			{
+				objectIdCache[i] = oid;
+			}
 			// bounds-check eliminated array setting has about equal performance as manual unsafe putting
 			if((target[i] = handler.lookupObject(oid)) != null)
 			{
@@ -2085,6 +2144,38 @@ public abstract class Binary implements Chunk
 		final int                 length
 	)
 	{
+		this.storeReferencesAsList(memoryOffset, persister, array, offset, length, null);
+	}
+
+	/**
+	 * Variant of {@link #storeReferencesAsList(long, PersistenceFunction, Object[], int, int)} that can
+	 * reuse the object ids a previous store assigned to the very same elements.
+	 * <p>
+	 * An element whose id is cached is referenced by the id alone instead of being applied again. That
+	 * is the difference between referencing an element and storing it: the caller states by providing
+	 * the id that the element is unchanged since it was written under that id.
+	 * <p>
+	 * Only applicable while the entity holding this list still references the cached ids, which is what
+	 * keeps their entities reachable. The caller is responsible for invalidating an id as soon as its
+	 * element is replaced, and for adopting newly assigned ids only after the store was committed.
+	 *
+	 * @param memoryOffset the offset to write the list at.
+	 * @param persister    the persister to apply not-cached elements to.
+	 * @param array        the elements to be referenced.
+	 * @param offset       the first element's index.
+	 * @param length       the number of elements.
+	 * @param objectIdCache one id per element, {@link Swizzling#notFoundId()} where no id is cached.
+	 *                      Assigned ids are written back into it. May be {@literal null}.
+	 */
+	public final void storeReferencesAsList(
+		final long                memoryOffset ,
+		final PersistenceFunction persister    ,
+		final Object[]            array        ,
+		final int                 offset       ,
+		final int                 length       ,
+		final long[]              objectIdCache
+	)
+	{
 		this.storeListHeader(
 			memoryOffset,
 			referenceBinaryLength(length),
@@ -2096,8 +2187,35 @@ public abstract class Binary implements Chunk
 		final int bound = offset + length;
 		for(int i = offset; i < bound; i++)
 		{
-			this.set_longToAddress(elementsDataAddress + referenceBinaryLength(i), persister.apply(array[i]));
+			this.set_longToAddress(
+				elementsDataAddress + referenceBinaryLength(i),
+				storeReference(persister, array[i], objectIdCache, i)
+			);
 		}
+	}
+
+	private static long storeReference(
+		final PersistenceFunction persister    ,
+		final Object              element      ,
+		final long[]              objectIdCache,
+		final int                 index
+	)
+	{
+		if(objectIdCache == null)
+		{
+			return persister.apply(element);
+		}
+
+		final long cachedObjectId = objectIdCache[index];
+
+		/* A cached id means the element is unchanged and its entity is still referenced by the
+		 * currently persisted form of this entity, so referencing it is sufficient: applying it
+		 * again would only produce a superseded copy.
+		 */
+		return Swizzling.isFoundId(cachedObjectId)
+			? cachedObjectId
+			: (objectIdCache[index] = persister.apply(element))
+		;
 	}
 	
 	
