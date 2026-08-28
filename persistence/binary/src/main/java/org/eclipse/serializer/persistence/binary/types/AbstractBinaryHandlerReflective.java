@@ -34,10 +34,13 @@ import org.eclipse.serializer.persistence.types.PersistenceLoadHandler;
 import org.eclipse.serializer.persistence.types.PersistenceReferenceLoader;
 import org.eclipse.serializer.persistence.types.PersistenceStoreHandler;
 import org.eclipse.serializer.persistence.types.PersistenceTypeDefinitionMember;
+import org.eclipse.serializer.persistence.types.PersistenceTypeDefinitionMemberField;
 import org.eclipse.serializer.persistence.types.PersistenceTypeDefinitionMemberFieldReflective;
+import org.eclipse.serializer.persistence.types.PersistenceTypeDefinitionMemberFieldValueStruct;
 import org.eclipse.serializer.persistence.types.PersistenceTypeDescriptionMember;
 import org.eclipse.serializer.persistence.types.PersistenceTypeHandlerReflective;
 import org.eclipse.serializer.persistence.types.Persister;
+import org.eclipse.serializer.persistence.types.PersistenceValueInliningResolver;
 import org.eclipse.serializer.reflect.XReflect;
 import org.eclipse.serializer.util.UtilStackTrace;
 
@@ -82,12 +85,14 @@ implements PersistenceTypeHandlerReflective<Binary, T>
 	}
 	
 	protected static EqHashEnum<PersistenceTypeDefinitionMemberFieldReflective> deriveMembers(
-		final XGettingEnum<Field>            fields        ,
-		final PersistenceFieldLengthResolver lengthResolver
+		final Class<?>                         entityType      ,
+		final XGettingEnum<Field>              fields          ,
+		final PersistenceFieldLengthResolver   lengthResolver  ,
+		final PersistenceValueInliningResolver inliningResolver
 	)
 	{
 		final EqHashEnum<PersistenceTypeDefinitionMemberFieldReflective> members = MemberEnum();
-		
+
 		for(final Field field : fields)
 		{
 			// just a precaution
@@ -95,16 +100,40 @@ implements PersistenceTypeHandlerReflective<Binary, T>
 			{
 				throw new PersistenceExceptionTypeConsistency("static fields are not persistable.");
 			}
-			
-			final PersistenceTypeDefinitionMemberFieldReflective member = declaredField(field, lengthResolver);
-			
+
+			final PersistenceTypeDefinitionMemberFieldReflective member = deriveMember(
+				entityType, field, lengthResolver, inliningResolver
+			);
+
 			if(!members.add(member))
 			{
 				throw new PersistenceExceptionTypeConsistency("Duplicate member descriptions.");
 			}
 		}
-		
+
 		return members;
+	}
+
+	private static PersistenceTypeDefinitionMemberFieldReflective deriveMember(
+		final Class<?>                         entityType      ,
+		final Field                            field           ,
+		final PersistenceFieldLengthResolver   lengthResolver  ,
+		final PersistenceValueInliningResolver inliningResolver
+	)
+	{
+		final XGettingEnum<Field> inlinedFields = inliningResolver.resolveInlinedFields(entityType, field);
+		if(inlinedFields == null)
+		{
+			return declaredField(field, lengthResolver);
+		}
+
+		final BulkList<PersistenceTypeDefinitionMemberField> inlinedMembers = BulkList.New();
+		for(final Field inlinedField : inlinedFields)
+		{
+			inlinedMembers.add(declaredField(inlinedField, lengthResolver));
+		}
+
+		return PersistenceTypeDefinitionMemberFieldValueStruct.New(field, inlinedMembers);
 	}
 	
 	protected static final EqConstHashEnum<PersistenceTypeDefinitionMemberFieldReflective> filter(
@@ -146,9 +175,30 @@ implements PersistenceTypeHandlerReflective<Binary, T>
 		for(final PersistenceTypeDefinitionMemberFieldReflective member : storingMembers)
 		{
 			final boolean isEager = eagerEvaluator.isEagerStoring(entityType, member.field());
-			
+
 			BinaryValueStorer customFieldStorer = fieldHandlerProvider.lookupFieldStorer(member.field(), isEager, switchByteOrder);
-			if (customFieldStorer != null)
+			if(member instanceof PersistenceTypeDefinitionMemberFieldValueStruct)
+			{
+				final PersistenceTypeDefinitionMemberFieldValueStruct struct =
+					(PersistenceTypeDefinitionMemberFieldValueStruct)member
+				;
+
+				if(customFieldStorer != null)
+				{
+					/* The two describe the same field differently: the custom storer writes an object id where
+					 * the type description states an inlined layout. Reading that back would misinterpret the
+					 * owner's whole binary form, so the conflict must be resolved by configuration.
+					 */
+					throw new PersistenceExceptionTypeConsistency(
+						"Field " + member.identifier() + " is both inlined and handled by a custom field storer."
+					);
+				}
+
+				storers[i++] = BinaryValueStructFunctions.provideStorer(
+					struct.members(), struct.persistentMinimumLength(), switchByteOrder
+				);
+			}
+			else if (customFieldStorer != null)
 			{
 				storers[i++] = customFieldStorer;
 			}
@@ -221,6 +271,7 @@ implements PersistenceTypeHandlerReflective<Binary, T>
 	private final EqConstHashEnum<PersistenceTypeDefinitionMemberFieldReflective>
 		referenceMembers,
 		primitiveMembers,
+		structMembers   ,
 		storingMembers  ,
 		settingMembers
 	;
@@ -251,6 +302,8 @@ implements PersistenceTypeHandlerReflective<Binary, T>
 	private final boolean switchByteOrder;
 
 	private final BinaryFieldHandlerProvider fieldHandlerProvider;
+
+	private final PersistenceValueInliningResolver inliningResolver;
 	
 	/* (28.10.2019 TM)TODO: encapsulate / abstract BinaryValue~ handling types.
 	 * While the per-field handling via the BinaryValue~ handling types is perfectly fine for JDK
@@ -275,13 +328,15 @@ implements PersistenceTypeHandlerReflective<Binary, T>
 		final PersistenceFieldLengthResolver        lengthResolver      ,
 		final PersistenceEagerStoringFieldEvaluator eagerEvaluator      ,
 		final BinaryFieldHandlerProvider            fieldHandlerProvider,
+		final PersistenceValueInliningResolver      inliningResolver    ,
 		final boolean                               switchByteOrder
 	)
 	{
 		super(type, typeName);
-		
+
 		this.switchByteOrder = switchByteOrder;
 		this.fieldHandlerProvider = fieldHandlerProvider;
+		this.inliningResolver = inliningResolver;
 		
 		/*
 		 * Unsafe JavaDoc says ensureClassInitialized is "often needed" for getting the field base, so better do it.
@@ -291,17 +346,36 @@ implements PersistenceTypeHandlerReflective<Binary, T>
 		XMemory.ensureClassInitialized(type, persistableFields);
 		
 		final EqHashEnum<PersistenceTypeDefinitionMemberFieldReflective> instMembersInDeclOrdr =
-			deriveMembers(persistableFields, lengthResolver)
+			deriveMembers(type, persistableFields, lengthResolver, inliningResolver)
 		;
-		
+
 		this.membersInDeclaredOrder = this.deriveAllMembers(instMembersInDeclOrdr);
-		
+
 		// member instances are created from the persistable fields and split into references and primitives
 		this.referenceMembers = this.filterReferenceMembers(instMembersInDeclOrdr, MemberEnum()).immure();
 		this.primitiveMembers = this.filterPrimitiveMembers(instMembersInDeclOrdr, MemberEnum()).immure();
-		
-		// persistent order is all reference fields in declared order, then all primitive fields in declared order.
-		this.storingMembers = MemberEnum(this.referenceMembers).addAll(this.primitiveMembers).immure();
+		this.structMembers    = this.filterStructMembers(instMembersInDeclOrdr, MemberEnum()).immure();
+
+		/* Persistent order is all reference fields in declared order, then all inlined fields, then all
+		 * primitive fields. Inlined fields sit behind the references so that the leading run of object ids
+		 * stays exactly the references, which is what the reference iteration relies on.
+		 */
+		this.storingMembers = MemberEnum(this.referenceMembers)
+			.addAll(this.structMembers)
+			.addAll(this.primitiveMembers)
+			.immure()
+		;
+
+		/* Every member must land in exactly one group. Were one to fall through, it would silently vanish
+		 * from the persistent form while still being part of the instance.
+		 */
+		if(this.storingMembers.size() != instMembersInDeclOrdr.size())
+		{
+			throw new PersistenceExceptionTypeConsistency(
+				"Persistent member count " + this.storingMembers.size() + " of " + type.getName()
+				+ " does not match its " + instMembersInDeclOrdr.size() + " persistable fields."
+			);
+		}
 		this.settingMembers = this.filterSettingMembers(this.storingMembers);
 		
 		// storing/setting memory offsets initialization must be overridable for enum special casing
@@ -370,6 +444,11 @@ implements PersistenceTypeHandlerReflective<Binary, T>
 		final PersistenceTypeDefinitionMemberFieldReflective member
 	)
 	{
+		if(member instanceof PersistenceTypeDefinitionMemberFieldValueStruct)
+		{
+			return this.deriveStructSetter((PersistenceTypeDefinitionMemberFieldValueStruct)member);
+		}
+
 		BinaryValueSetter customFieldSetter = this.fieldHandlerProvider.lookupFieldSetter(member.field(), this.isSwitchedByteOrder());
 		if (customFieldSetter != null)
 		{
@@ -379,6 +458,31 @@ implements PersistenceTypeHandlerReflective<Binary, T>
 		{
 			return BinaryValueFunctions.getObjectValueSetter(member.type(), this.isSwitchedByteOrder());
 		}
+	}
+
+	private BinaryValueSetter deriveStructSetter(final PersistenceTypeDefinitionMemberFieldValueStruct member)
+	{
+		/* The inlined instance is constructed rather than populated, so the constructor's parameter order is
+		 * needed alongside the persistent order. Re-resolving yields it, since the resolver reports the
+		 * inlined type's fields in declaration order.
+		 */
+		final XGettingEnum<Field> declarationOrder = this.inliningResolver.resolveInlinedFields(
+			this.type(), member.field()
+		);
+		if(declarationOrder == null)
+		{
+			throw new PersistenceExceptionTypeConsistency(
+				"Field " + member.identifier() + " is described as inlined but is no longer eligible for inlining."
+			);
+		}
+
+		return BinaryValueStructFunctions.provideSetter(
+			member.type()                   ,
+			member.members()                ,
+			declarationOrder                ,
+			member.persistentMinimumLength(),
+			this.isSwitchedByteOrder()
+		);
 	}
 	
 	protected long[] initializeStoringRefMemOffsets()
@@ -404,6 +508,16 @@ implements PersistenceTypeHandlerReflective<Binary, T>
 		);
 	}
 	
+	protected EqHashEnum<PersistenceTypeDefinitionMemberFieldReflective> filterStructMembers(
+		final XGettingCollection<PersistenceTypeDefinitionMemberFieldReflective> members,
+		final EqHashEnum<PersistenceTypeDefinitionMemberFieldReflective>         target
+	)
+	{
+		return members.filterTo(target, m ->
+			m instanceof PersistenceTypeDefinitionMemberFieldValueStruct
+		);
+	}
+
 	protected EqHashEnum<PersistenceTypeDefinitionMemberFieldReflective> filterPrimitiveMembers(
 		final XGettingCollection<PersistenceTypeDefinitionMemberFieldReflective> members,
 		final EqHashEnum<PersistenceTypeDefinitionMemberFieldReflective>         target

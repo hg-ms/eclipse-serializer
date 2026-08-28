@@ -28,6 +28,7 @@ import org.eclipse.serializer.persistence.types.PersistenceEagerStoringFieldEval
 import org.eclipse.serializer.persistence.types.PersistenceFieldLengthResolver;
 import org.eclipse.serializer.persistence.types.PersistenceLoadHandler;
 import org.eclipse.serializer.persistence.types.PersistenceTypeDefinitionMemberFieldReflective;
+import org.eclipse.serializer.persistence.types.PersistenceValueInliningResolver;
 import org.eclipse.serializer.reflect.XReflect;
 import org.eclipse.serializer.util.logging.Logging;
 import org.slf4j.Logger;
@@ -209,7 +210,7 @@ public final class BinaryHandlerGenericValueClass<T> extends AbstractBinaryHandl
 		return false;
 	}
 
-	private static MethodHandle resolveConstructor(
+	static MethodHandle resolveConstructor(
 		final Class<?>            type             ,
 		final Class<?>[]          parameterTypes   ,
 		final XGettingEnum<Field> persistableFields
@@ -308,6 +309,12 @@ public final class BinaryHandlerGenericValueClass<T> extends AbstractBinaryHandl
 			lengthResolver      ,
 			eagerEvaluator      ,
 			fieldHandlerProvider,
+
+			/* This handler reads its members through readers rather than setters, since an identity-less
+			 * instance is constructed rather than populated. Inlining a field would need a reader for the
+			 * inlined layout, which does not exist yet, so the fields of a value class stay referenced.
+			 */
+			PersistenceValueInliningResolver.Disabled(),
 			switchByteOrder
 		);
 
@@ -374,7 +381,7 @@ public final class BinaryHandlerGenericValueClass<T> extends AbstractBinaryHandl
 		}
 	}
 
-	private static Class<?>[] toParameterTypes(final XGettingEnum<Field> persistableFields)
+	static Class<?>[] toParameterTypes(final XGettingEnum<Field> persistableFields)
 	{
 		final Class<?>[] parameterTypes = new Class<?>[persistableFields.intSize()];
 

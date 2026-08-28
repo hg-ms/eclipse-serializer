@@ -314,6 +314,7 @@ extends PersistenceFoundation<Binary, F>
 				this.getInstantiatorProvider(),
 				this.referenceTypeHandlerManager(),
 				this.getFieldHandlerProvider(),
+				this.getValueInliningResolver(),
 				this.isByteOrderMismatch()
 			);
 		}

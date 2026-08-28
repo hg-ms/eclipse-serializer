@@ -48,6 +48,7 @@ import org.eclipse.serializer.persistence.types.PersistenceTypeHandlerCreator;
 import org.eclipse.serializer.persistence.types.PersistenceTypeHandlerManager;
 import org.eclipse.serializer.persistence.types.PersistenceTypeInstantiatorProvider;
 import org.eclipse.serializer.persistence.types.PersistenceTypeResolver;
+import org.eclipse.serializer.persistence.types.PersistenceValueInliningResolver;
 import org.eclipse.serializer.reference.Referencing;
 import org.eclipse.serializer.reflect.XReflect;
 import org.eclipse.serializer.util.logging.Logging;
@@ -93,6 +94,7 @@ public interface BinaryTypeHandlerCreator extends PersistenceTypeHandlerCreator<
 		final PersistenceTypeInstantiatorProvider<Binary>        instantiatorProvider      ,
 		final Referencing<PersistenceTypeHandlerManager<Binary>> typeHandlerManager        ,
 		final BinaryFieldHandlerProvider                         fieldHandlerProvider      ,
+		final PersistenceValueInliningResolver                   inliningResolver          ,
 		final boolean                                            switchByteOrder
 	)
 	{
@@ -104,6 +106,7 @@ public interface BinaryTypeHandlerCreator extends PersistenceTypeHandlerCreator<
 			notNull(instantiatorProvider)      ,
 			notNull(typeHandlerManager)        ,
 			notNull(fieldHandlerProvider)      ,
+			notNull(inliningResolver)          ,
 			switchByteOrder
 		);
 	}
@@ -123,6 +126,7 @@ public interface BinaryTypeHandlerCreator extends PersistenceTypeHandlerCreator<
 		final boolean                                            switchByteOrder         ;
 		      EntityTypeHandlerManager entityTypeHandlerManager;
 		final private BinaryFieldHandlerProvider                 fieldHandlerProvider    ;
+		final private PersistenceValueInliningResolver           inliningResolver        ;
 		
 		
 		///////////////////////////////////////////////////////////////////////////
@@ -137,6 +141,7 @@ public interface BinaryTypeHandlerCreator extends PersistenceTypeHandlerCreator<
 			final PersistenceTypeInstantiatorProvider<Binary>        instantiatorProvider      ,
 			final Referencing<PersistenceTypeHandlerManager<Binary>> typeHandlerManager        ,
 			final BinaryFieldHandlerProvider                         fieldHandlerProvider      ,
+			final PersistenceValueInliningResolver                   inliningResolver          ,
 			final boolean                                            switchByteOrder
 		)
 		{
@@ -144,6 +149,7 @@ public interface BinaryTypeHandlerCreator extends PersistenceTypeHandlerCreator<
 			this.instantiatorProvider = instantiatorProvider;
 			this.typeHandlerManager   = typeHandlerManager  ;
 			this.fieldHandlerProvider = fieldHandlerProvider;
+			this.inliningResolver     = inliningResolver    ;
 			this.switchByteOrder      = switchByteOrder     ;
 		}
 
@@ -295,6 +301,7 @@ public interface BinaryTypeHandlerCreator extends PersistenceTypeHandlerCreator<
 				this.eagerStoringFieldEvaluator(),
 				this.instantiatorProvider.provideTypeInstantiator(type),
 				this.fieldHandlerProvider        ,
+				this.inliningResolver            ,
 				this.switchByteOrder
 			);
 		}
@@ -378,7 +385,7 @@ public interface BinaryTypeHandlerCreator extends PersistenceTypeHandlerCreator<
 				this.switchByteOrder
 			);
 		}
-		
+
 		@Override
 		protected <T> PersistenceTypeHandler<Binary, T> internalCreateTypeHandlerEntity(
 			final Class<T> type

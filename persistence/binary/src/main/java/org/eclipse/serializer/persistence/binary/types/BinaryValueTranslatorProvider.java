@@ -23,6 +23,8 @@ import org.eclipse.serializer.collections.types.XGettingSequence;
 import org.eclipse.serializer.persistence.binary.exceptions.BinaryPersistenceException;
 import org.eclipse.serializer.persistence.types.PersistenceTypeDefinition;
 import org.eclipse.serializer.persistence.types.PersistenceTypeDefinitionMember;
+import org.eclipse.serializer.persistence.types.PersistenceTypeDefinitionMemberFieldValueStruct;
+import org.eclipse.serializer.persistence.types.PersistenceTypeDescriptionMemberFieldValueStruct;
 import org.eclipse.serializer.persistence.types.PersistenceTypeDescriptionMember;
 import org.eclipse.serializer.persistence.types.PersistenceTypeHandler;
 import org.eclipse.serializer.typing.TypeMappingLookup;
@@ -166,6 +168,14 @@ public interface BinaryValueTranslatorProvider
 		
 		private BinaryValueSetter provideValueSkipper(final PersistenceTypeDefinitionMember sourceMember)
 		{
+			if(sourceMember instanceof PersistenceTypeDescriptionMemberFieldValueStruct)
+			{
+				// an inlined slot is longer than the object id a reference would occupy here
+				return BinaryValueStructFunctions.provideSkipper(
+					(PersistenceTypeDescriptionMemberFieldValueStruct)sourceMember
+				);
+			}
+
 			if(sourceMember.isReference())
 			{
 				// skip the long-typed OID value
@@ -275,6 +285,39 @@ public interface BinaryValueTranslatorProvider
 		{
 			return BinaryValueFunctions.getObjectValueSetter(Object.class, this.switchByteOrder);
 		}
+
+		/**
+		 * An inlined slot carries the field's content rather than an object id, so reading it means
+		 * constructing the instance from that content. That is only possible while the described layout still
+		 * matches the type's current one: the constructor takes every field, so a layout that has since gained
+		 * or lost one cannot be invoked from what was written.
+		 * <p>
+		 * Translating such a change would mean matching the described fields against the current ones and
+		 * defaulting what is missing, one level below the member matching that got us here. Until that exists,
+		 * the change is refused rather than approximated: silently defaulting the whole field would drop what
+		 * was stored without telling anyone.
+		 */
+		private BinaryValueSetter provideInlinedValueTranslator(
+			final PersistenceTypeDefinitionMember sourceMember,
+			final PersistenceTypeDefinitionMember targetMember
+		)
+		{
+			if(sourceMember.equalsLayout(targetMember)
+			&& sourceMember instanceof PersistenceTypeDefinitionMemberFieldValueStruct
+			)
+			{
+				return BinaryValueStructFunctions.provideSetter(
+					(PersistenceTypeDefinitionMemberFieldValueStruct)sourceMember,
+					this.switchByteOrder
+				);
+			}
+
+			throw new BinaryPersistenceException(
+				"The inlined layout of " + toTypedIdentifier(sourceMember) + " has changed and cannot be read"
+				+ " into " + toTypedIdentifier(targetMember) + ". Inlining a type fixes its layout in every"
+				+ " owner that inlines it."
+			);
+		}
 		
 		private static void validateIsReferenceType(final PersistenceTypeDescriptionMember member)
 		{
@@ -364,8 +407,13 @@ public interface BinaryValueTranslatorProvider
 				return customValueSetter;
 			}
 			
+			if(sourceMember instanceof PersistenceTypeDescriptionMemberFieldValueStruct)
+			{
+				return this.provideInlinedValueTranslator(sourceMember, targetMember);
+			}
+
 			// note: see #validateCompatibleTargetType for target field type compatability validation.
-			
+
 			// check for generically handleable types on both sides
 			final Class<?> sourceType = sourceMember.type();
 			final Class<?> targetType = targetMember.type();
@@ -390,7 +438,21 @@ public interface BinaryValueTranslatorProvider
 			{
 				return BinaryValueTranslators.provideReferenceValueBinaryTranslator(sourceMember, targetMember);
 			}
-			
+
+			if(sourceMember instanceof PersistenceTypeDescriptionMemberFieldValueStruct
+			|| targetMember instanceof PersistenceTypeDescriptionMemberFieldValueStruct
+			)
+			{
+				/* This path rewrites one binary form into another, which for an inlined slot would mean
+				 * relaying out its content. Nothing reaches it today, because the handlers that use it never
+				 * inline; the guard is here so that changing that is a failure rather than a silent misread.
+				 */
+				throw new BinaryPersistenceException(
+					"Inlined field " + toTypedIdentifier(sourceMember) + " cannot be rewritten into the"
+					+ " current layout."
+				);
+			}
+
 			validateIsPrimitiveType(sourceMember);
 			
 			// target may be null (meaning the source member/field value shall be skipped)
