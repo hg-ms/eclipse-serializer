@@ -309,11 +309,11 @@ public final class XReflect
 	 */
 	public static boolean isValueClass(final Class<?> c)
 	{
-		/* A primitive reports itself as a value type, which it is, but it is not a value class: it has no
-		 * declaration, no fields and no constructor, so none of what callers ask this question for applies
-		 * to it.
+		/* A primitive and an interface both report themselves as value types, which they are in the type
+		 * system's terms but not in the sense the callers ask about: neither declares fields or a
+		 * constructor, and an interface-typed field holds a reference, never a value laid out in its owner.
 		 */
-		if(c == null || c.isPrimitive() || CLASS_IS_VALUE == null)
+		if(c == null || c.isPrimitive() || c.isInterface() || CLASS_IS_VALUE == null)
 		{
 			return false;
 		}
