@@ -136,7 +136,7 @@ public interface PersistenceValueInliningResolver
 
 	/**
 	 * Creates a resolver that inlines every field the passed selector accepts and that is eligible: the field's
-	 * declared type must be a value class whose own persistable fields are all primitives.
+	 * declared type must be a concrete value class whose own persistable fields are all primitives.
 	 * <p>
 	 * The type must be a value class because only an identity-less instance can be reconstructed from its
 	 * content alone without changing what the owner refers to. It must be the field's declared type because
@@ -200,6 +200,15 @@ public interface PersistenceValueInliningResolver
 			{
 				// not a value class, so there is nothing to decide and nothing worth reporting
 				return null;
+			}
+
+			if(XReflect.isAbstract(valueType))
+			{
+				/* An abstract type is not exact: the field may hold subtype instances, whose state the
+				 * declared type's layout cannot represent. Only a concrete value class, which is final by
+				 * definition, guarantees that the layout written is the layout of every instance held.
+				 */
+				return decline(field, valueType.getName() + " is abstract, so the field may hold subtype instances");
 			}
 
 			if(!this.selector.test(ownerType, field))
