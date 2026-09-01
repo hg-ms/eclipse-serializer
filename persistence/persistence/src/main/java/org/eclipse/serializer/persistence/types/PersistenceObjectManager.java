@@ -264,7 +264,22 @@ extends PersistenceSwizzlingLookup, PersistenceObjectIdHolder, Cloneable<Persist
 		{
 			synchronized(this.objectRegistry)
 			{
-				return this.objectRegistry.lookupObjectId(object);
+				final long objectId = this.objectRegistry.lookupObjectId(object);
+				if(Swizzling.isProperId(objectId) || !Persistence.areJavaConstantsValueInstances())
+				{
+					return objectId;
+				}
+
+				/* A JDK constant that is a value instance is never registry-resident, but its id is
+				 * deterministic and reserved, so the lookup can and must still answer it: it is the id
+				 * every store references the constant by.
+				 */
+				final long constantId = Persistence.lookupJavaConstantId(object);
+
+				return Swizzling.isFoundId(constantId)
+					? constantId
+					: objectId
+				;
 			}
 		}
 
@@ -276,7 +291,14 @@ extends PersistenceSwizzlingLookup, PersistenceObjectIdHolder, Cloneable<Persist
 //			);
 			synchronized(this.objectRegistry)
 			{
-				return this.objectRegistry.lookupObject(objectId);
+				final Object object = this.objectRegistry.lookupObject(objectId);
+				if(object != null || !Persistence.areJavaConstantsValueInstances())
+				{
+					return object;
+				}
+
+				// see #lookupObjectId: the reverse direction of the same reserved constant ids.
+				return Persistence.resolveJavaConstantInstance(objectId);
 			}
 		}
 
