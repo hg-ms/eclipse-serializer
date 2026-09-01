@@ -17,7 +17,6 @@ package org.eclipse.serializer.persistence.binary.types;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
-import java.lang.invoke.VarHandle;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -36,12 +35,11 @@ import org.eclipse.serializer.reflect.XReflect;
  * reports which fields are laid out that way, so every field of a value class is reached this way, whether
  * or not this JVM embedded that particular one.
  * <p>
- * Reading goes through a {@link VarHandle}, which the JVM resolves against the field's actual layout.
- * Writing cannot: a {@link VarHandle} refuses to write a final field, and such fields are the norm here.
- * A setter {@link MethodHandle} of an accessible field writes finals and is equally layout-aware, so it
- * carries the write side &mdash; except for a record's fields, which accept no handle write at all and are
- * written through the same internal accessor that populates their other fields, made layout-aware.
- * Offsets stay in use for every field that is not value-typed.
+ * Both directions go through the accessible field's {@link MethodHandle}, which the JVM resolves against
+ * the field's actual layout, which writes final fields (unlike a {@link java.lang.invoke.VarHandle}), and
+ * whose signature can be pre-adapted so every invocation is exact. The one exception is a record's fields,
+ * which accept no handle write at all and are written through the same internal accessor that populates
+ * their other fields, made layout-aware. Offsets stay in use for every field that is not value-typed.
  *
  * @see BinaryValueFunctions
  */
@@ -52,30 +50,47 @@ public final class BinaryValueHandleFunctions
 	///////////////////
 
 	/**
-	 * Resolves a {@link VarHandle} for the passed field. Note that it supports writing only for
-	 * non-final fields; use {@link #provideFieldWriter(Field)} to write.
+	 * Resolves the reader for the passed field, resolved by the JVM against the field's actual layout.
 	 *
-	 * @param field the field to reach; must not be {@code null}.
+	 * @param field the field to read; must not be {@code null}.
 	 *
-	 * @return the handle for that field.
+	 * @return the reader for that field.
 	 *
 	 * @throws BinaryPersistenceException if the declaring class does not grant the required access.
 	 */
-	public static VarHandle provideVarHandle(final Field field)
+	public static FieldReader provideFieldReader(final Field field)
 	{
+		final MethodHandle getter;
 		try
 		{
-			return MethodHandles
-				.privateLookupIn(field.getDeclaringClass(), MethodHandles.lookup())
-				.unreflectVarHandle(field)
+			// pre-adapted so every read is an exact invocation instead of an adapted one.
+			getter = MethodHandles.lookup()
+				.unreflectGetter(XReflect.setAccessible(field))
+				.asType(MethodType.methodType(Object.class, Object.class))
 			;
 		}
 		catch(final IllegalAccessException e)
 		{
 			throw new BinaryPersistenceException(
-				"Cannot access field " + field + ". Its module must open the declaring package.", e
+				"Cannot read field " + field + ". Its module must open the declaring package.", e
 			);
 		}
+
+		return owner ->
+		{
+			try
+			{
+				return getter.invokeExact(owner);
+			}
+			catch(final RuntimeException | Error e)
+			{
+				throw e;
+			}
+			catch(final Throwable t)
+			{
+				throw new BinaryPersistenceException("Failed to read field " + field + ".", t);
+			}
+		};
 	}
 
 	/**
@@ -148,11 +163,11 @@ public final class BinaryValueHandleFunctions
 		final boolean switchByteOrder
 	)
 	{
-		final VarHandle handle = provideVarHandle(field);
+		final FieldReader reader = provideFieldReader(field);
 
 		return (source, sourceOffset, targetAddress, persister) ->
 		{
-			final Object value    = handle.get(source);
+			final Object value    = reader.readValue(source);
 			final long   objectId = isEager
 				? persister.applyEager(value)
 				: persister.apply(value)
@@ -195,6 +210,24 @@ public final class BinaryValueHandleFunctions
 	///////////////////////////////////////////////////////////////////////////
 	// member types //
 	/////////////////
+
+	/**
+	 * Reads one field's value from an owner instance.
+	 *
+	 * @see BinaryValueHandleFunctions#provideFieldReader(Field)
+	 */
+	@FunctionalInterface
+	public interface FieldReader
+	{
+		/**
+		 * Reads this reader's field from the passed owner.
+		 *
+		 * @param owner the instance to read from.
+		 *
+		 * @return the field's value, may be {@code null}.
+		 */
+		public Object readValue(Object owner);
+	}
 
 	/**
 	 * Writes one field's value into an owner instance.

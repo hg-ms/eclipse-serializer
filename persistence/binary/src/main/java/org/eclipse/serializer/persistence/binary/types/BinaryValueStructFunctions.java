@@ -19,7 +19,6 @@ import static org.eclipse.serializer.persistence.types.PersistenceTypeDescriptio
 import static org.eclipse.serializer.persistence.types.PersistenceTypeDescriptionMemberFieldValueStruct.NULL_MARKER_PRESENT;
 
 import java.lang.invoke.MethodHandle;
-import java.lang.invoke.VarHandle;
 import java.lang.reflect.Field;
 
 import org.eclipse.serializer.collections.HashEnum;
@@ -27,6 +26,7 @@ import org.eclipse.serializer.collections.types.XGettingEnum;
 import org.eclipse.serializer.collections.types.XGettingSequence;
 import org.eclipse.serializer.memory.XMemory;
 import org.eclipse.serializer.persistence.binary.exceptions.BinaryPersistenceException;
+import org.eclipse.serializer.persistence.binary.types.BinaryValueHandleFunctions.FieldReader;
 import org.eclipse.serializer.persistence.binary.types.BinaryValueHandleFunctions.FieldWriter;
 import org.eclipse.serializer.persistence.types.PersistenceLoadHandler;
 import org.eclipse.serializer.persistence.types.PersistenceStoreHandler;
@@ -85,7 +85,7 @@ public final class BinaryValueStructFunctions
 		}
 
 		return new StructStorer(
-			BinaryValueHandleFunctions.provideVarHandle(ownerField),
+			BinaryValueHandleFunctions.provideFieldReader(ownerField),
 			storers,
 			offsets,
 			structLength
@@ -391,20 +391,20 @@ public final class BinaryValueStructFunctions
 
 	private static final class StructStorer implements BinaryValueStorer
 	{
-		private final VarHandle           ownerHandle ;
+		private final FieldReader         ownerReader ;
 		private final BinaryValueStorer[] storers     ;
 		private final long[]              offsets     ;
 		private final long                structLength;
 
 		StructStorer(
-			final VarHandle           ownerHandle ,
+			final FieldReader         ownerReader ,
 			final BinaryValueStorer[] storers     ,
 			final long[]              offsets     ,
 			final long                structLength
 		)
 		{
 			super();
-			this.ownerHandle  = ownerHandle ;
+			this.ownerReader  = ownerReader ;
 			this.storers      = storers     ;
 			this.offsets      = offsets     ;
 			this.structLength = structLength;
@@ -419,7 +419,7 @@ public final class BinaryValueStructFunctions
 		)
 		{
 			// reached through a handle: a value may be laid out inside its owner, with no reference at its offset
-			final Object value = this.ownerHandle.get(source);
+			final Object value = this.ownerReader.readValue(source);
 			if(value == null)
 			{
 				// zeroed rather than skipped, so the slot's content never depends on what was there before

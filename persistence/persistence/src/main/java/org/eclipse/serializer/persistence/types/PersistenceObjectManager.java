@@ -304,13 +304,17 @@ extends PersistenceSwizzlingLookup, PersistenceObjectIdHolder, Cloneable<Persist
 			synchronized(this.objectRegistry)
 			{
 				long objectId;
-				if(Swizzling.isFoundId(objectId = this.synchRegisterJavaConstant(object, objectIdRequestor, optionalHandler)))
-				{
-					return objectId;
-				}
-
 				if(Swizzling.isNotProperId(objectId = this.objectRegistry.lookupObjectId(object)))
 				{
+					/* Probed only after the registry misses: on a JVM where the JDK constants are value
+					 * instances, they are never registry-resident, so the probe is needed - but only here,
+					 * off the dominant already-registered path.
+					 */
+					if(Swizzling.isFoundId(objectId = this.synchRegisterJavaConstant(object, objectIdRequestor, optionalHandler)))
+					{
+						return objectId;
+					}
+
 					if(Swizzling.isNotProperId(objectId = this.synchCheckLocalRegistries(objectIdRequestor, object, optionalHandler)))
 					{
 						// see below about not globally registering the newly assigned objectId
@@ -371,13 +375,13 @@ extends PersistenceSwizzlingLookup, PersistenceObjectIdHolder, Cloneable<Persist
 			synchronized(this.objectRegistry)
 			{
 				long objectId;
-				if(Swizzling.isFoundId(objectId = this.synchRegisterJavaConstant(object, objectIdRequestor, optionalHandler)))
-				{
-					return objectId;
-				}
-
 				if(Swizzling.isNotProperId(objectId = this.objectRegistry.lookupObjectId(object)))
 				{
+					if(Swizzling.isFoundId(objectId = this.synchRegisterJavaConstant(object, objectIdRequestor, optionalHandler)))
+					{
+						return objectId;
+					}
+
 					if(Swizzling.isNotProperId(objectId = this.synchCheckLocalRegistries(objectIdRequestor, object, optionalHandler)))
 					{
 						objectId = this.oidProvider.provideNextObjectId();

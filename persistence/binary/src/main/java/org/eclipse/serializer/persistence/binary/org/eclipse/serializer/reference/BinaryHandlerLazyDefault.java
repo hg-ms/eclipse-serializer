@@ -115,24 +115,27 @@ public final class BinaryHandlerLazyDefault extends AbstractBinaryHandlerCustom<
 				handler.noteTrustedReference(referenceOid);
 			}
 		}
-		else if(isKeepableValueLink(instance, referent, handler))
+		else if(isLinkedValueReferent(instance, referent, handler))
 		{
-			/* A value instance has no identity, so applying it would assign a new objectId on every
-			 * store and invalidate the existing link. That is unnecessary: the referent is immutable,
-			 * so the entity the link points to can never become stale. The established link is kept
-			 * and the referent is referenced instead of stored again, exactly like an unloaded one.
-			 */
-			referenceOid = instance.objectId();
-			handler.noteTrustedReference(referenceOid);
-		}
-		else if(isRelinkableValueReferent(instance, referent, handler))
-		{
-			/* An eager store must reach everything the referent references, so the referent is applied
-			 * despite being immutable. That assigns a new objectId, hence the link has to move to it -
-			 * which is sound precisely because the two objectIds address indistinguishable state.
-			 */
-			referenceOid = handler.apply(referent);
-			relinkValue  = true;
+			if(handler.isEagerStoring())
+			{
+				/* An eager store must reach everything the referent references, so the referent is applied
+				 * despite being immutable. That assigns a new objectId, hence the link has to move to it -
+				 * which is sound precisely because the two objectIds address indistinguishable state.
+				 */
+				referenceOid = handler.apply(referent);
+				relinkValue  = true;
+			}
+			else
+			{
+				/* A value instance has no identity, so applying it would assign a new objectId on every
+				 * store and invalidate the existing link. That is unnecessary: the referent is immutable,
+				 * so the entity the link points to can never become stale. The established link is kept
+				 * and the referent is referenced instead of stored again, exactly like an unloaded one.
+				 */
+				referenceOid = instance.objectId();
+				handler.noteTrustedReference(referenceOid);
+			}
 		}
 		else
 		{
@@ -187,33 +190,10 @@ public final class BinaryHandlerLazyDefault extends AbstractBinaryHandlerCustom<
 	}
 
 	/**
-	 * Whether the referent is a value instance whose established link can simply be kept: it is
-	 * immutable, so the entity behind the link cannot become stale, and re-applying it would only
-	 * assign a new objectId. Does not hold for an eager store, which has to reach the referent's own
-	 * references.
+	 * Whether the referent is a value instance behind an established link, whose store must either
+	 * keep the link (the referent is immutable, so the entity behind it cannot become stale) or, on
+	 * an eager store, apply the referent and move the link to the newly assigned objectId.
 	 */
-	private static boolean isKeepableValueLink(
-		final Lazy.Default<?>                 instance,
-		final Object                          referent,
-		final PersistenceStoreHandler<Binary> handler
-	)
-	{
-		return !handler.isEagerStoring() && isLinkedValueReferent(instance, referent, handler);
-	}
-
-	/**
-	 * Whether the referent is a value instance that has to be applied although it is already linked,
-	 * which moves the link to the objectId the store assigns.
-	 */
-	private static boolean isRelinkableValueReferent(
-		final Lazy.Default<?>                 instance,
-		final Object                          referent,
-		final PersistenceStoreHandler<Binary> handler
-	)
-	{
-		return handler.isEagerStoring() && isLinkedValueReferent(instance, referent, handler);
-	}
-
 	private static boolean isLinkedValueReferent(
 		final Lazy.Default<?>                 instance,
 		final Object                          referent,
