@@ -130,28 +130,25 @@ implements PersistenceTypeHandlerReflective<Binary, T>
 		final BulkList<PersistenceTypeDefinitionMemberField> inlinedMembers = BulkList.New();
 		for(final Field inlinedField : inlinedFields)
 		{
-			inlinedMembers.add(declaredField(inlinedField, lengthResolver));
+			final PersistenceTypeDefinitionMemberField inlinedMember = declaredField(inlinedField, lengthResolver);
+			if(inlinedMember.hasReferences())
+			{
+				/* An inlined slot is a fixed-length non-reference member, which is what lets the storage engine
+				 * skip it as it skips a primitive. An object id inside one would be skipped along with it, so
+				 * the garbage collector would never see the entity it points to and would collect it while it is
+				 * still referenced. The member creation below refuses that as well; this here adds the field
+				 * context to point at the resolver that wrongly deemed the field inlinable.
+				 */
+				throw new PersistenceExceptionTypeConsistency(
+					"Field " + field.getDeclaringClass().getName() + "#" + field.getName()
+					+ " cannot be inlined: " + field.getType().getName()
+					+ " holds references, and an inlined slot must not."
+				);
+			}
+			inlinedMembers.add(inlinedMember);
 		}
 
-		final PersistenceTypeDefinitionMemberFieldValueStruct member =
-			PersistenceTypeDefinitionMemberFieldValueStruct.New(field, inlinedMembers)
-		;
-
-		if(member.hasReferences())
-		{
-			/* An inlined slot is a fixed-length non-reference member, which is what lets the storage engine
-			 * skip it as it skips a primitive. An object id inside one would be skipped along with it, so
-			 * the garbage collector would never see the entity it points to and would collect it while it is
-			 * still referenced. Nothing downstream can detect that, so the field is refused here rather than
-			 * written in a form that cannot be traversed.
-			 */
-			throw new PersistenceExceptionTypeConsistency(
-				"Field " + member.identifier() + " cannot be inlined: " + field.getType().getName()
-				+ " holds references, and an inlined slot must not."
-			);
-		}
-
-		return member;
+		return PersistenceTypeDefinitionMemberFieldValueStruct.New(field, inlinedMembers);
 	}
 	
 	protected static final EqConstHashEnum<PersistenceTypeDefinitionMemberFieldReflective> filter(

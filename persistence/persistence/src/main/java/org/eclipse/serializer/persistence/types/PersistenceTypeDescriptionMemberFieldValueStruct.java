@@ -93,6 +93,43 @@ extends PersistenceTypeDescriptionMemberFieldReflective
 		return length;
 	}
 
+	/**
+	 * Validates that no member of an inlined layout holds a reference and returns the resulting
+	 * {@code hasReferences} state, which is consequently always {@literal false}.
+	 * <p>
+	 * An inlined slot is skipped as one fixed-length block wherever references are traversed, most
+	 * critically by the storage garbage collector: an object id inside one would be invisible to it,
+	 * so the entity it points to would be collected while still referenced. Nothing downstream can
+	 * detect that, so a reference-bearing layout is refused wherever such a member is created,
+	 * dictionary parsing included.
+	 *
+	 * @param name    the described field's name, used for reporting.
+	 * @param members the members describing the inlined layout.
+	 *
+	 * @return always {@literal false}.
+	 *
+	 * @throws PersistenceException if a member holds references.
+	 */
+	public static boolean validateNoReferences(
+		final String                                                       name   ,
+		final XGettingSequence<? extends PersistenceTypeDescriptionMember> members
+	)
+	{
+		for(final PersistenceTypeDescriptionMember member : members)
+		{
+			if(member.hasReferences())
+			{
+				throw new PersistenceException(
+					"Member " + member.identifier() + " of the inlined field " + name + " holds references,"
+					+ " which an inlined slot must not: they would be invisible to reference traversal,"
+					+ " the storage garbage collector included."
+				);
+			}
+		}
+
+		return false;
+	}
+
 
 
 	///////////////////////////////////////////////////////////////////////////
@@ -206,7 +243,7 @@ extends PersistenceTypeDescriptionMemberFieldReflective
 				name             ,
 				false            , // not a reference: the content is inlined, not pointed to
 				false            , // not a primitive: it is a composite of its own members
-				PersistenceTypeDescriptionMember.determineHasReferences(members),
+				validateNoReferences(name, members),
 				calculateStructLength(members),
 				calculateStructLength(members)
 			);
