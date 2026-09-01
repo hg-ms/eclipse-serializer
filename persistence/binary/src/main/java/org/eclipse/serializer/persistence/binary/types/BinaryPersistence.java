@@ -64,11 +64,20 @@ import org.eclipse.serializer.persistence.binary.java.sql.BinaryHandlerSqlDate;
 import org.eclipse.serializer.persistence.binary.java.sql.BinaryHandlerSqlTime;
 import org.eclipse.serializer.persistence.binary.java.sql.BinaryHandlerSqlTimestamp;
 import org.eclipse.serializer.persistence.binary.java.sql.BinaryLegacyTypeHandlerSqlTimestamp;
+import org.eclipse.serializer.persistence.binary.java.time.BinaryHandlerDuration;
+import org.eclipse.serializer.persistence.binary.java.time.BinaryHandlerInstant;
 import org.eclipse.serializer.persistence.binary.java.time.BinaryHandlerLocalDate;
+import org.eclipse.serializer.persistence.binary.java.time.BinaryHandlerLocalDateTime;
+import org.eclipse.serializer.persistence.binary.java.time.BinaryHandlerLocalTime;
 import org.eclipse.serializer.persistence.binary.java.time.BinaryHandlerMonthDay;
+import org.eclipse.serializer.persistence.binary.java.time.BinaryHandlerOffsetDateTime;
+import org.eclipse.serializer.persistence.binary.java.time.BinaryHandlerOffsetTime;
 import org.eclipse.serializer.persistence.binary.java.time.BinaryHandlerPeriod;
+import org.eclipse.serializer.persistence.binary.java.time.BinaryHandlerYear;
 import org.eclipse.serializer.persistence.binary.java.time.BinaryHandlerYearMonth;
+import org.eclipse.serializer.persistence.binary.java.time.BinaryHandlerZonedDateTime;
 import org.eclipse.serializer.persistence.binary.java.time.BinaryHandlerZoneOffset;
+import org.eclipse.serializer.persistence.binary.java.time.BinaryHandlerZoneRegion;
 import org.eclipse.serializer.persistence.binary.java.util.BinaryHandlerArrayDeque;
 import org.eclipse.serializer.persistence.binary.java.util.BinaryHandlerArrayList;
 import org.eclipse.serializer.persistence.binary.java.util.BinaryHandlerBitSet;
@@ -330,6 +339,19 @@ public final class BinaryPersistence extends Persistence
 				BinaryHandlerLocalDate.New(),
 				BinaryHandlerYearMonth.New(),
 				BinaryHandlerMonthDay.New(),
+
+				/* These hold their parts in references and, as value classes, cannot be created empty and
+				 * populated afterwards, so they are built from their persisted parts instead.
+				 */
+				BinaryHandlerLocalTime.New()     ,
+				BinaryHandlerLocalDateTime.New() ,
+				BinaryHandlerOffsetTime.New()    ,
+				BinaryHandlerOffsetDateTime.New(),
+				BinaryHandlerZonedDateTime.New() ,
+				BinaryHandlerZoneRegion.New()    ,
+				BinaryHandlerYear.New()          ,
+				BinaryHandlerInstant.New()       ,
+				BinaryHandlerDuration.New()      ,
 
 			/* (12.11.2019 TM)NOTE:
 			 * One might think that "empty" implementations of a collection interface would have no fields, anyway.
