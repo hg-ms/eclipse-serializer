@@ -27,6 +27,7 @@ import org.eclipse.serializer.collections.types.XGettingEnum;
 import org.eclipse.serializer.collections.types.XGettingSequence;
 import org.eclipse.serializer.memory.XMemory;
 import org.eclipse.serializer.persistence.binary.exceptions.BinaryPersistenceException;
+import org.eclipse.serializer.persistence.binary.types.BinaryValueHandleFunctions.FieldWriter;
 import org.eclipse.serializer.persistence.types.PersistenceLoadHandler;
 import org.eclipse.serializer.persistence.types.PersistenceStoreHandler;
 import org.eclipse.serializer.persistence.types.PersistenceTypeDefinitionMemberField;
@@ -143,7 +144,7 @@ public final class BinaryValueStructFunctions
 		);
 
 		return new StructSetter(
-			BinaryValueHandleFunctions.provideVarHandle(ownerField),
+			BinaryValueHandleFunctions.provideFieldWriter(ownerField),
 			valueType,
 			readers,
 			targets,
@@ -441,7 +442,7 @@ public final class BinaryValueStructFunctions
 
 	private static final class StructSetter implements BinaryValueSetter
 	{
-		private final VarHandle      ownerHandle  ;
+		private final FieldWriter    ownerWriter  ;
 		private final Class<?>       valueType    ;
 		private final StructReader[] readers      ;
 		private final int[]          targets      ;
@@ -450,7 +451,7 @@ public final class BinaryValueStructFunctions
 		private final long           structLength ;
 
 		StructSetter(
-			final VarHandle      ownerHandle  ,
+			final FieldWriter    ownerWriter  ,
 			final Class<?>       valueType    ,
 			final StructReader[] readers      ,
 			final int[]          targets      ,
@@ -460,7 +461,7 @@ public final class BinaryValueStructFunctions
 		)
 		{
 			super();
-			this.ownerHandle   = ownerHandle  ;
+			this.ownerWriter   = ownerWriter  ;
 			this.valueType     = valueType    ;
 			this.readers       = readers      ;
 			this.targets       = targets      ;
@@ -479,7 +480,7 @@ public final class BinaryValueStructFunctions
 		{
 			if(XMemory.get_byte(srcAddress) == NULL_MARKER_ABSENT)
 			{
-				this.ownerHandle.set(target, null);
+				this.ownerWriter.writeValue(target, null);
 				return srcAddress + this.structLength;
 			}
 
@@ -491,7 +492,7 @@ public final class BinaryValueStructFunctions
 				address += this.readers[i].readValue(address, args, this.targets[i]);
 			}
 
-			this.ownerHandle.set(target, this.createValue(args));
+			this.ownerWriter.writeValue(target, this.createValue(args));
 
 			return address;
 		}
