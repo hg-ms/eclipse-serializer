@@ -43,11 +43,11 @@ public class BinaryLoadItem extends Binary
 	PersistenceTypeHandler<Binary, Object> handler;
 	Object existingInstance, createdInstance;
 
-	/* Value instances are created from their fully resolved state instead of being created blank and
-	 * populated afterwards, so their creation must be deferred until their references are resolvable.
-	 * See BinaryLoader.Default#ensureValueInstance.
+	/* Some instances are created from their fully resolved state instead of being created blank and
+	 * populated afterwards (value instances foremost), so their creation must be deferred until their
+	 * references are resolvable. See BinaryLoader.Default#ensureDeferredInstance.
 	 */
-	boolean valueCreationPending, valueCreationActive;
+	boolean deferredCreationPending, deferredCreationActive;
 	BinaryLoadItem next, link;
 
 

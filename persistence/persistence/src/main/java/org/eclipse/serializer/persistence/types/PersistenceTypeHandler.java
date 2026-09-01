@@ -104,6 +104,25 @@ public interface PersistenceTypeHandler<D, T> extends PersistenceTypeDefinition,
 	}
 
 	/**
+	 * Whether {@link #create} may only be called once every reference it resolves is resolvable, i.e.
+	 * after all of a load's build items exist.
+	 * <p>
+	 * Required by a handler that builds its instances from resolved references instead of creating
+	 * them blank and populating them afterwards: a value instance cannot be populated at all, and an
+	 * identity instance whose creation needs another instance's <i>state</i> (not merely the
+	 * reference) must wait until that instance can be provided completely.
+	 * <p>
+	 * The default implementation returns {@link #isValueClassType()}, since a value class handler is
+	 * exactly such a handler.
+	 *
+	 * @return whether the loader must defer this handler's instance creation.
+	 */
+	public default boolean isCreationDeferred()
+	{
+		return this.isValueClassType();
+	}
+
+	/**
 	 * Tests whether the passed entity type is valid input for this handler. Default implementation
 	 * accepts {@code type} when it is assignable to {@link #type()} &mdash; i.e. a sub-type of the
 	 * handled type. Sub-type acceptance (rather than identity) is required because some classes must
@@ -210,10 +229,11 @@ public interface PersistenceTypeHandler<D, T> extends PersistenceTypeDefinition,
 	 * {@literal null} for anything not yet created. Resolving a reference is only valid from
 	 * {@link #initializeState} / {@link #updateState} onwards.
 	 * <p>
-	 * The one exception is a handler reporting {@link #isValueClassType()}: its instances cannot be
-	 * created uninitialized, so it does resolve its references here and the loader defers its
-	 * creation until they can be resolved. That deferral only works because no other handler
-	 * resolves references in this method.
+	 * The one exception is a handler reporting {@link #isCreationDeferred()}: it builds its instances
+	 * from resolved references, so the loader defers its creation until they can be resolved. Note
+	 * that a resolved reference is guaranteed to exist but not to be populated yet, unless its own
+	 * handler reports {@link #isCreationDeferred()} as well or creates complete instances to begin
+	 * with.
 	 *
 	 * @param data    the persisted form to read identity-information from.
 	 * @param handler receives nested-reference resolution requests.

@@ -263,12 +263,12 @@ public interface BinaryLoader extends PersistenceLoader, PersistenceLoadHandler
 
 			if((loadItem.existingInstance = this.objectRegistry.lookupObject(loadItem.getBuildItemObjectId())) == null)
 			{
-				if(loadItem.handler.isValueClassType())
+				if(loadItem.handler.isCreationDeferred())
 				{
-					/* A value instance is created from its complete state, including its references,
-					 * which cannot be resolved yet at this point. See #ensureValueInstance.
+					/* Such an instance is created from its resolved references, which cannot be
+					 * resolved yet at this point. See #ensureDeferredInstance.
 					 */
-					loadItem.valueCreationPending = true;
+					loadItem.deferredCreationPending = true;
 				}
 				else
 				{
@@ -320,9 +320,9 @@ public interface BinaryLoader extends PersistenceLoader, PersistenceLoadHandler
 			{
 				return entry.existingInstance;
 			}
-			if(entry.valueCreationPending)
+			if(entry.deferredCreationPending)
 			{
-				this.ensureValueInstance(entry);
+				this.ensureDeferredInstance(entry);
 			}
 			if(entry.createdInstance == null)
 			{
@@ -348,37 +348,38 @@ public interface BinaryLoader extends PersistenceLoader, PersistenceLoadHandler
 		}
 
 		/**
-		 * Creates a pending value instance, on demand and hence in dependency order: creating it
-		 * resolves its references, which creates every value instance it references first.
+		 * Creates a pending deferred instance, on demand and hence in dependency order: creating it
+		 * resolves its references, which creates every deferred instance it references first.
 		 * <p>
-		 * Identity instances referenced by it are already created (blank) at this point, which is
-		 * sufficient since only the reference itself is needed, not its state.
+		 * Non-deferred instances referenced by it are already created at this point, but only a
+		 * handler that creates complete instances guarantees usable state; a blank one suffices when
+		 * only the reference itself is needed.
 		 * <p>
-		 * A value instance can only ever reference value instances that existed before it, so the
-		 * recursion is finite for consistent data. An inconsistent cycle is detected and reported
+		 * A deferred instance can only ever reference deferred instances that existed before it, so
+		 * the recursion is finite for consistent data. An inconsistent cycle is detected and reported
 		 * instead of overflowing the stack.
 		 *
-		 * @param entry the build item whose value instance is to be created.
+		 * @param entry the build item whose deferred instance is to be created.
 		 */
-		private void ensureValueInstance(final BinaryLoadItem entry)
+		private void ensureDeferredInstance(final BinaryLoadItem entry)
 		{
-			if(entry.valueCreationActive)
+			if(entry.deferredCreationActive)
 			{
 				throw new BinaryPersistenceException(
-					"Cyclic value instance reference detected for objectId " + entry.getBuildItemObjectId()
-					+ " of type " + entry.handler.typeName() + "."
+					"Cyclic reference detected while deferring creation for objectId "
+					+ entry.getBuildItemObjectId() + " of type " + entry.handler.typeName() + "."
 				);
 			}
 
-			entry.valueCreationActive = true;
+			entry.deferredCreationActive = true;
 			try
 			{
 				entry.createdInstance = entry.handler.create(entry, this);
 			}
 			finally
 			{
-				entry.valueCreationActive  = false;
-				entry.valueCreationPending = false;
+				entry.deferredCreationActive  = false;
+				entry.deferredCreationPending = false;
 			}
 		}
 

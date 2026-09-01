@@ -158,6 +158,13 @@ public class PersistenceLegacyTypeHandlerWrapper<D, T> extends PersistenceLegacy
 		// Must pass through all default methods to be a correct wrapper.
 		return this.typeHandler.isValueClassType();
 	}
+
+	@Override
+	public boolean isCreationDeferred()
+	{
+		// Must pass through all default methods to be a correct wrapper.
+		return this.typeHandler.isCreationDeferred();
+	}
 	
 	
 	
