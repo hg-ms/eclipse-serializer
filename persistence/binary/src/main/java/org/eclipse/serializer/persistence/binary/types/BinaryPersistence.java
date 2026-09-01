@@ -340,18 +340,14 @@ public final class BinaryPersistence extends Persistence
 				BinaryHandlerYearMonth.New(),
 				BinaryHandlerMonthDay.New(),
 
-				/* These hold their parts in references and, as value classes, cannot be created empty and
-				 * populated afterwards, so they are built from their persisted parts instead.
+				/* Self-contained java.time types whose instances, as value classes, cannot be populated
+				 * after creation. The reference-holding java.time types are registered with the
+				 * referencing-type handlers below.
 				 */
-				BinaryHandlerLocalTime.New()     ,
-				BinaryHandlerLocalDateTime.New() ,
-				BinaryHandlerOffsetTime.New()    ,
-				BinaryHandlerOffsetDateTime.New(),
-				BinaryHandlerZonedDateTime.New() ,
-				BinaryHandlerZoneRegion.New()    ,
-				BinaryHandlerYear.New()          ,
-				BinaryHandlerInstant.New()       ,
-				BinaryHandlerDuration.New()      ,
+				BinaryHandlerLocalTime.New(),
+				BinaryHandlerYear.New()     ,
+				BinaryHandlerInstant.New()  ,
+				BinaryHandlerDuration.New() ,
 
 			/* (12.11.2019 TM)NOTE:
 			 * One might think that "empty" implementations of a collection interface would have no fields, anyway.
@@ -446,7 +442,17 @@ public final class BinaryPersistence extends Persistence
 				/* Optional holds its content in a single reference. A generic handler would create it empty
 				 * and populate it afterwards, which does not take on a value class.
 				 */
-				BinaryHandlerOptional.New()
+				BinaryHandlerOptional.New(),
+
+				/* The java.time types holding their parts in references. Not value-type handlers: their
+				 * creation resolves references, which a plugin reusing the value-type handlers (e.g. the
+				 * REST viewer) cannot provide.
+				 */
+				BinaryHandlerLocalDateTime.New() ,
+				BinaryHandlerOffsetTime.New()    ,
+				BinaryHandlerOffsetDateTime.New(),
+				BinaryHandlerZonedDateTime.New() ,
+				BinaryHandlerZoneRegion.New()
 		);
 
 		return nativeHandlers;

@@ -32,8 +32,10 @@ import org.eclipse.serializer.reflect.XReflect;
  * which reproduces the state exactly for a persisted nano value, always within
  * {@code [0, 999_999_999]}.
  * <p>
- * Where it is an ordinary class, it keeps being created empty and populated, preserving the
- * behavior the reflective handling had, updating an already registered instance included.
+ * The instance is created complete either way, since a plugin reusing the value-type handlers (e.g.
+ * the REST viewer) relies on {@link #create} alone. Where the type is an ordinary class, an already
+ * registered instance is still populated in {@link #updateState}, preserving the update behavior the
+ * reflective handling had.
  * <p>
  * The persisted form is byte-identical to the one the reflective handling produced, under the same
  * type and member names, so existing data is unaffected.
@@ -123,12 +125,6 @@ public final class BinaryHandlerInstant extends AbstractBinaryHandlerCustomNonRe
 	@Override
 	public Instant create(final Binary data, final PersistenceLoadHandler handler)
 	{
-		if(!this.isValueClassType())
-		{
-			// created blank; the values are set in #updateState
-			return XMemory.instantiateBlank(Instant.class);
-		}
-
 		return Instant.ofEpochSecond(
 			data.read_long(BINARY_OFFSET_SECONDS),
 			data.read_int (BINARY_OFFSET_NANOS)

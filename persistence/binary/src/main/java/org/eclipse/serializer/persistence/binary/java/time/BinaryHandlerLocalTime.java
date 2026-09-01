@@ -31,8 +31,10 @@ import org.eclipse.serializer.reflect.XReflect;
  * so it cannot be constructed generically from its fields either. It is therefore built from its
  * persisted values through {@link LocalTime#of(int, int, int, int)}.
  * <p>
- * Where it is an ordinary class, it keeps being created empty and populated, preserving the
- * behavior the reflective handling had, updating an already registered instance included.
+ * The instance is created complete either way, since a plugin reusing the value-type handlers (e.g.
+ * the REST viewer) relies on {@link #create} alone. Where the type is an ordinary class, an already
+ * registered instance is still populated in {@link #updateState}, preserving the update behavior the
+ * reflective handling had.
  * <p>
  * The persisted form is byte-identical to the one the reflective handling produced, under the same
  * type and member names, so existing data is unaffected.
@@ -140,12 +142,6 @@ public final class BinaryHandlerLocalTime extends AbstractBinaryHandlerCustomNon
 	@Override
 	public LocalTime create(final Binary data, final PersistenceLoadHandler handler)
 	{
-		if(!this.isValueClassType())
-		{
-			// created blank; the values are set in #updateState
-			return XMemory.instantiateBlank(LocalTime.class);
-		}
-
 		return LocalTime.of(
 			data.read_byte(BINARY_OFFSET_HOUR)  ,
 			data.read_byte(BINARY_OFFSET_MINUTE),
