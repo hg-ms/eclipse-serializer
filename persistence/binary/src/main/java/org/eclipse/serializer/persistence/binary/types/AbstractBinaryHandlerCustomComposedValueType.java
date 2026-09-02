@@ -21,6 +21,7 @@ import java.util.function.Function;
 import org.eclipse.serializer.collections.BulkList;
 import org.eclipse.serializer.collections.types.XGettingSequence;
 import org.eclipse.serializer.memory.XMemory;
+import org.eclipse.serializer.persistence.binary.exceptions.BinaryPersistenceException;
 import org.eclipse.serializer.persistence.types.PersistenceFunction;
 import org.eclipse.serializer.persistence.types.PersistenceLoadHandler;
 import org.eclipse.serializer.persistence.types.PersistenceReferenceLoader;
@@ -55,6 +56,7 @@ import org.eclipse.serializer.reflect.XReflect;
  * @param <T> the handled type.
  */
 public abstract class AbstractBinaryHandlerCustomComposedValueType<T> extends AbstractBinaryHandlerCustom<T>
+implements ValidatingBinaryHandler<T, T>
 {
 	///////////////////////////////////////////////////////////////////////////
 	// static methods //
@@ -135,6 +137,17 @@ public abstract class AbstractBinaryHandlerCustomComposedValueType<T> extends Ab
 		return index * Binary.referenceBinaryLength(1);
 	}
 
+	private Object[] resolveParts(final Binary data, final PersistenceLoadHandler handler)
+	{
+		final Object[] parts = new Object[this.parts.length];
+		for(int i = 0; i < parts.length; i++)
+		{
+			parts[i] = handler.lookupObject(data.read_long(this.binaryOffset(i)));
+		}
+
+		return parts;
+	}
+
 
 
 	///////////////////////////////////////////////////////////////////////////
@@ -165,13 +178,20 @@ public abstract class AbstractBinaryHandlerCustomComposedValueType<T> extends Ab
 			return XMemory.instantiateBlank(this.type());
 		}
 
-		final Object[] parts = new Object[this.parts.length];
-		for(int i = 0; i < parts.length; i++)
+		return this.createFromParts(this.resolveParts(data, handler));
+	}
+
+	@Override
+	public void initializeState(final Binary data, final T instance, final PersistenceLoadHandler handler)
+	{
+		if(this.isCreationDeferred())
 		{
-			parts[i] = handler.lookupObject(data.read_long(this.binaryOffset(i)));
+			// built complete from its parts, so there is nothing to initialize afterwards
+			return;
 		}
 
-		return this.createFromParts(parts);
+		// created blank, so initializing it is populating it
+		this.updateState(data, instance, handler);
 	}
 
 	@Override
@@ -179,7 +199,14 @@ public abstract class AbstractBinaryHandlerCustomComposedValueType<T> extends Ab
 	{
 		if(this.isCreationDeferred())
 		{
-			// already complete: it was built from its content rather than populated
+			/* Reached for an instance this handler did not build - the ones it builds are complete and
+			 * go through #initializeState. Such an instance cannot be updated, so validating is what
+			 * keeps a divergence from dropping the persisted state silently, e.g. for an explicitly set
+			 * root, whose instance is registered for the persisted objectId before this handler ever
+			 * sees the data.
+			 */
+			this.validateState(data, instance, handler);
+
 			return;
 		}
 
@@ -221,6 +248,34 @@ public abstract class AbstractBinaryHandlerCustomComposedValueType<T> extends Ab
 	public boolean hasVaryingPersistedLengthInstances()
 	{
 		return false;
+	}
+
+	@Override
+	public void validateState(final Binary data, final T instance, final PersistenceLoadHandler handler)
+	{
+		this.validateStates(
+			instance,
+			instance,
+			this.createFromParts(this.resolveParts(data, handler))
+		);
+	}
+
+	@Override
+	public T getValidationStateFromInstance(final T instance)
+	{
+		return instance;
+	}
+
+	/**
+	 * Never called: the state a part carries can only be read through the load handler, so
+	 * {@link #validateState} is overridden instead of composed from this method.
+	 */
+	@Override
+	public T getValidationStateFromBinary(final Binary data)
+	{
+		throw new BinaryPersistenceException(
+			"The persisted state of " + this.type().getName() + " can only be read with a load handler."
+		);
 	}
 
 
