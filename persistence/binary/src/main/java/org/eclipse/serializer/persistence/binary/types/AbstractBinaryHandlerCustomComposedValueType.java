@@ -36,13 +36,17 @@ import org.eclipse.serializer.reflect.XReflect;
  * Where the handled type is a value class, its instances cannot be created empty and populated
  * afterwards, and its constructor cannot be reached because its module does not open the package. The
  * instance is therefore built from its resolved parts by {@link #createFromParts(Object[])}. That
- * resolves references in {@link #create}, which only a handler reporting {@link #isValueClassType()}
- * may do; the loader defers such a creation until they can be resolved. Note that a resolved part is
- * guaranteed to exist but not to be populated, so {@link #createFromParts(Object[])} may only use a
- * part's state if that part's own handler creates complete instances.
+ * resolves references in {@link #create}, which only a handler reporting
+ * {@link #isCreationDeferred()} may do; the loader defers such a creation until they can be resolved.
+ * Note that a resolved part is guaranteed to exist but not to be populated, so
+ * {@link #createFromParts(Object[])} may only use a part's state if that part's own handler creates
+ * complete instances.
  * <p>
  * Where it is an ordinary class, it keeps being created empty and populated, so that its instances
- * stay registered by identity as they are today.
+ * stay registered by identity as they are today. A subclass whose instances must be built from their
+ * content on every JVM &mdash; because populating them would leave them incomplete &mdash; opts out
+ * of that by overriding {@link #isCreationDeferred()} to a constant {@literal true}, which this base
+ * reads in its constructor.
  * <p>
  * The persisted form is one reference per part, under the field's name qualified with the declaring
  * type, so it is byte-identical to the one the reflective handling produced and existing data is
@@ -99,7 +103,7 @@ public abstract class AbstractBinaryHandlerCustomComposedValueType<T> extends Ab
 		this.parts        = parts.clone();
 		this.binaryLength = parts.length * Binary.referenceBinaryLength(1);
 
-		final boolean populated = !this.isValueClassType();
+		final boolean populated = !this.isCreationDeferred();
 		this.memoryOffsets = new long[parts.length];
 		for(int i = 0; i < parts.length; i++)
 		{
@@ -117,8 +121,8 @@ public abstract class AbstractBinaryHandlerCustomComposedValueType<T> extends Ab
 	/////////////////////
 
 	/**
-	 * Builds an instance from its resolved parts, in the declared part order. Only called where the
-	 * handled type is a value class; see the type comment for what a part guarantees at this point.
+	 * Builds an instance from its resolved parts, in the declared part order. Only called where this
+	 * handler's creation is deferred; see the type comment for what a part guarantees at this point.
 	 *
 	 * @param parts the resolved parts, in the order the handler declares them.
 	 *
@@ -155,7 +159,7 @@ public abstract class AbstractBinaryHandlerCustomComposedValueType<T> extends Ab
 	@Override
 	public T create(final Binary data, final PersistenceLoadHandler handler)
 	{
-		if(!this.isValueClassType())
+		if(!this.isCreationDeferred())
 		{
 			// created blank; the parts are set in #updateState
 			return XMemory.instantiateBlank(this.type());
@@ -173,7 +177,7 @@ public abstract class AbstractBinaryHandlerCustomComposedValueType<T> extends Ab
 	@Override
 	public void updateState(final Binary data, final T instance, final PersistenceLoadHandler handler)
 	{
-		if(this.isValueClassType())
+		if(this.isCreationDeferred())
 		{
 			// already complete: it was built from its content rather than populated
 			return;

@@ -16,36 +16,27 @@ package org.eclipse.serializer.persistence.binary.java.time;
 
 import java.time.ZoneId;
 
-import org.eclipse.serializer.persistence.binary.types.AbstractBinaryHandlerCustom;
-import org.eclipse.serializer.persistence.binary.types.Binary;
-import org.eclipse.serializer.persistence.types.PersistenceFunction;
-import org.eclipse.serializer.persistence.types.PersistenceLoadHandler;
-import org.eclipse.serializer.persistence.types.PersistenceReferenceLoader;
-import org.eclipse.serializer.persistence.types.PersistenceStoreHandler;
+import org.eclipse.serializer.persistence.binary.types.AbstractBinaryHandlerCustomComposedValueType;
 
 /**
  * Handler for {@code java.time.ZoneRegion}, the package-private {@link ZoneId} implementation for
  * region-based zone ids. It holds nothing but its id; the zone rules are transient and re-resolved
  * from the id.
  * <p>
- * The instance is built completely through {@link ZoneId#of(String)}, with its creation deferred
- * until the id can be resolved. That matters to handlers building their own instances from a
- * resolved zone, e.g. for {@code ZonedDateTime}: a blank zone cannot answer for its rules, a
- * complete one can.
+ * The instance is built completely through {@link ZoneId#of(String)} on every JVM, with its creation
+ * deferred until the id can be resolved. Populating instead would leave the rules unresolved, and a
+ * complete instance is what handlers building their own instances from a resolved zone need, e.g.
+ * for {@code ZonedDateTime}: a blank zone cannot answer for its rules. See
+ * {@link AbstractBinaryHandlerCustomComposedValueType} for the mechanism.
  * <p>
  * The persisted form is byte-identical to the one the reflective handling produced, under the same
  * type and member name, so existing data is unaffected.
  */
-public final class BinaryHandlerZoneRegion extends AbstractBinaryHandlerCustom<ZoneId>
+public final class BinaryHandlerZoneRegion extends AbstractBinaryHandlerCustomComposedValueType<ZoneId>
 {
 	///////////////////////////////////////////////////////////////////////////
 	// constants //
 	//////////////
-
-	private static final long
-		BINARY_OFFSET_ID = 0                                             ,
-		BINARY_LENGTH    = BINARY_OFFSET_ID + Binary.referenceBinaryLength(1)
-	;
 
 	private static final String TYPE_NAME = "java.time.ZoneRegion";
 
@@ -84,12 +75,7 @@ public final class BinaryHandlerZoneRegion extends AbstractBinaryHandlerCustom<Z
 	{
 		super(
 			handledType(),
-			CustomFields(
-				/* Qualified with the declaring type, so this description stays the one the reflective
-				 * handling produced and data written before this handler existed still matches.
-				 */
-				CustomField(String.class, TYPE_NAME, "id")
-			)
+			Part.New(String.class, "id", ZoneId::getId)
 		);
 	}
 
@@ -107,53 +93,9 @@ public final class BinaryHandlerZoneRegion extends AbstractBinaryHandlerCustom<Z
 	}
 
 	@Override
-	public void store(
-		final Binary                          data    ,
-		final ZoneId                          instance,
-		final long                            objectId,
-		final PersistenceStoreHandler<Binary> handler
-	)
+	protected ZoneId createFromParts(final Object[] parts)
 	{
-		data.storeEntityHeader(BINARY_LENGTH, this.typeId(), objectId);
-		data.store_long(BINARY_OFFSET_ID, handler.apply(instance.getId()));
-	}
-
-	@Override
-	public ZoneId create(final Binary data, final PersistenceLoadHandler handler)
-	{
-		return ZoneId.of(
-			(String)handler.lookupObject(data.read_long(BINARY_OFFSET_ID))
-		);
-	}
-
-	@Override
-	public void updateState(final Binary data, final ZoneId instance, final PersistenceLoadHandler handler)
-	{
-		// already complete: it was built from its content rather than populated
-	}
-
-	@Override
-	public void iterateInstanceReferences(final ZoneId instance, final PersistenceFunction iterator)
-	{
-		iterator.apply(instance.getId());
-	}
-
-	@Override
-	public void iterateLoadableReferences(final Binary data, final PersistenceReferenceLoader iterator)
-	{
-		iterator.acceptObjectId(data.read_long(BINARY_OFFSET_ID));
-	}
-
-	@Override
-	public boolean hasPersistedReferences()
-	{
-		return true;
-	}
-
-	@Override
-	public boolean hasVaryingPersistedLengthInstances()
-	{
-		return false;
+		return ZoneId.of((String)parts[0]);
 	}
 
 }

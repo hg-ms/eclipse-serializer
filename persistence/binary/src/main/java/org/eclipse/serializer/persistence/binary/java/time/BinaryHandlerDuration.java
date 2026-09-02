@@ -16,44 +16,13 @@ package org.eclipse.serializer.persistence.binary.java.time;
 
 import java.time.Duration;
 
-import org.eclipse.serializer.memory.XMemory;
-import org.eclipse.serializer.persistence.binary.types.AbstractBinaryHandlerCustomNonReferentialFixedLength;
-import org.eclipse.serializer.persistence.binary.types.Binary;
-import org.eclipse.serializer.persistence.types.PersistenceLoadHandler;
-import org.eclipse.serializer.persistence.types.PersistenceStoreHandler;
-import org.eclipse.serializer.reflect.XReflect;
-
 /**
- * Handler for {@link Duration}.
- * <p>
- * Where {@link Duration} is a value class, its instances cannot be created empty and populated
- * afterwards: the population write is not reliably visible on an identity-less instance. It is
- * therefore built from its persisted values through {@link Duration#ofSeconds(long, long)},
- * which reproduces the state exactly for a persisted nano value, always within
- * {@code [0, 999_999_999]}.
- * <p>
- * The instance is created complete either way, since a plugin reusing the value-type handlers (e.g.
- * the REST viewer) relies on {@link #create} alone. Where the type is an ordinary class, an already
- * registered instance is still populated in {@link #updateState}, preserving the update behavior the
- * reflective handling had.
- * <p>
- * The persisted form is byte-identical to the one the reflective handling produced, under the same
- * type and member names, so existing data is unaffected.
+ * Handler for {@link Duration}, which holds its state in a second and a nano-of-second value. Where
+ * it is a value class, the instance is built through {@link Duration#ofSeconds(long, long)}; see
+ * {@link AbstractBinaryHandlerSecondsNanos} for the mechanism.
  */
-public final class BinaryHandlerDuration extends AbstractBinaryHandlerCustomNonReferentialFixedLength<Duration>
+public final class BinaryHandlerDuration extends AbstractBinaryHandlerSecondsNanos<Duration>
 {
-	///////////////////////////////////////////////////////////////////////////
-	// constants //
-	//////////////
-
-	private static final long
-		BINARY_OFFSET_SECONDS = 0                                     ,
-		BINARY_OFFSET_NANOS   = BINARY_OFFSET_SECONDS + Long.BYTES    ,
-		BINARY_LENGTH         = BINARY_OFFSET_NANOS   + Integer.BYTES
-	;
-
-
-
 	///////////////////////////////////////////////////////////////////////////
 	// static methods //
 	///////////////////
@@ -66,41 +35,12 @@ public final class BinaryHandlerDuration extends AbstractBinaryHandlerCustomNonR
 
 
 	///////////////////////////////////////////////////////////////////////////
-	// instance fields //
-	////////////////////
-
-	// only needed where the type is an ordinary class and its instances are populated after creation.
-	private final long memoryOffsetSeconds;
-	private final long memoryOffsetNanos  ;
-
-
-
-	///////////////////////////////////////////////////////////////////////////
 	// constructors //
 	/////////////////
 
 	BinaryHandlerDuration()
 	{
-		super(
-			Duration.class,
-			CustomFields(
-				/* Qualified with the declaring type, so this description stays the one the reflective
-				 * handling produced and data written before this handler existed still matches.
-				 */
-				CustomField(long.class, Duration.class.getName(), "seconds"),
-				CustomField(int.class , Duration.class.getName(), "nanos"  )
-			)
-		);
-
-		final boolean populated = !this.isValueClassType();
-		this.memoryOffsetSeconds = populated
-			? XMemory.objectFieldOffset(XReflect.getAnyField(Duration.class, "seconds"))
-			: -1
-		;
-		this.memoryOffsetNanos   = populated
-			? XMemory.objectFieldOffset(XReflect.getAnyField(Duration.class, "nanos"))
-			: -1
-		;
+		super(Duration.class, Duration::getSeconds, Duration::getNano);
 	}
 
 
@@ -110,38 +50,9 @@ public final class BinaryHandlerDuration extends AbstractBinaryHandlerCustomNonR
 	/////////////////////
 
 	@Override
-	public void store(
-		final Binary                          data    ,
-		final Duration                        instance,
-		final long                            objectId,
-		final PersistenceStoreHandler<Binary> handler
-	)
+	protected Duration createFromValues(final long seconds, final int nanos)
 	{
-		data.storeEntityHeader(BINARY_LENGTH, this.typeId(), objectId);
-		data.store_long(BINARY_OFFSET_SECONDS, instance.getSeconds());
-		data.store_int (BINARY_OFFSET_NANOS  , instance.getNano()   );
-	}
-
-	@Override
-	public Duration create(final Binary data, final PersistenceLoadHandler handler)
-	{
-		return Duration.ofSeconds(
-			data.read_long(BINARY_OFFSET_SECONDS),
-			data.read_int (BINARY_OFFSET_NANOS)
-		);
-	}
-
-	@Override
-	public void updateState(final Binary data, final Duration instance, final PersistenceLoadHandler handler)
-	{
-		if(this.isValueClassType())
-		{
-			// already complete: it was built from its content rather than populated
-			return;
-		}
-
-		XMemory.set_long(instance, this.memoryOffsetSeconds, data.read_long(BINARY_OFFSET_SECONDS));
-		XMemory.set_int (instance, this.memoryOffsetNanos  , data.read_int (BINARY_OFFSET_NANOS)  );
+		return Duration.ofSeconds(seconds, nanos);
 	}
 
 }
