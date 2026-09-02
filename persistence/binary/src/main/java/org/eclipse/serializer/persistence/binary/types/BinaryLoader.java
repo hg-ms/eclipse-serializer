@@ -29,6 +29,7 @@ import org.eclipse.serializer.persistence.binary.org.eclipse.serializer.collecti
 import org.eclipse.serializer.persistence.exceptions.PersistenceExceptionConsistencyObject;
 import org.eclipse.serializer.persistence.exceptions.PersistenceExceptionTypeHandlerConsistencyUnhandledTypeId;
 import org.eclipse.serializer.persistence.types.*;
+import org.eclipse.serializer.reflect.XReflect;
 import org.eclipse.serializer.util.logging.Logging;
 import org.slf4j.Logger;
 
@@ -427,6 +428,15 @@ public interface BinaryLoader extends PersistenceLoader, PersistenceLoadHandler
 		
 		private void registerRoot(final Object rootInstance, final long rootObjectId)
 		{
+			// value instances may not be published to the registry, see #isValueClassType.
+			if(XReflect.isValueInstance(rootInstance))
+			{
+				/* A root is reached by its identifier, not by a registry lookup, so skipping this costs
+				 * nothing. The registration would throw IdentityException and leave the storage unopenable.
+				 */
+				return;
+			}
+
 			// root instances are global, so it is appropriate and required to register it globally right away
 			this.objectRegistry.registerObject(rootObjectId, rootInstance);
 		}
