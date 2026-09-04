@@ -327,9 +327,10 @@ public interface BinaryValueTranslatorProvider
 		 * that place instead. The value is written through a handle on the field, the way the current
 		 * handler's own setters do it.
 		 * <p>
-		 * Only a reference source can be redirected that way. Any other source form is decoded by a setter
-		 * that writes the decoded value at the offset itself, so it is refused here rather than written
-		 * blindly - writing it is precisely what this guards against.
+		 * A reference source is resolved into the field. A persisted primitive widening into its own
+		 * wrapper is boxed into it, because the offset-based translator for that pair boxes and writes in
+		 * one step and so cannot be redirected by swapping the setter. Any other source form is refused
+		 * rather than written blindly - writing it is precisely what this guards against.
 		 *
 		 * @param sourceMember    the legacy member being read.
 		 * @param targetMember    the current member being written, whose type is a value class.
@@ -348,10 +349,20 @@ public interface BinaryValueTranslatorProvider
 				return BinaryValueHandleFunctions.provideReferenceSetter(targetMember.field(), switchByteOrder);
 			}
 
+			final BinaryValueSetter boxingSetter = BinaryValueHandleFunctions.provideBoxingSetter(
+				targetMember.field(),
+				sourceMember.type() ,
+				switchByteOrder
+			);
+			if(boxingSetter != null)
+			{
+				return boxingSetter;
+			}
+
 			throw new BinaryPersistenceException(
-				"Cannot read " + toTypedIdentifier(sourceMember) + " into " + toTypedIdentifier(targetMember)
-				+ ": a field whose type is a value class may be laid out inside its owner, which only a"
-				+ " reference value can be written into."
+				"Cannot read \"" + toTypedIdentifier(sourceMember) + " into \"" + toTypedIdentifier(targetMember)
+				+ ": a field whose type is a value class may be laid out inside its owner, so only a"
+				+ " reference or a primitive widening into its own wrapper can be written into it."
 			);
 		}
 

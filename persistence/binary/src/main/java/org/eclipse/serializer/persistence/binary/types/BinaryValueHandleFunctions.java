@@ -207,6 +207,137 @@ public final class BinaryValueHandleFunctions
 
 
 
+	/**
+	 * @param primitiveType the type to look up.
+	 *
+	 * @return the wrapper type for the passed primitive type, or {@code null} if it is not one.
+	 */
+	private static Class<?> wrapperTypeOf(final Class<?> primitiveType)
+	{
+		return primitiveType == byte.class
+			? Byte.class
+			: primitiveType == boolean.class
+			? Boolean.class
+			: primitiveType == short.class
+			? Short.class
+			: primitiveType == char.class
+			? Character.class
+			: primitiveType == int.class
+			? Integer.class
+			: primitiveType == float.class
+			? Float.class
+			: primitiveType == long.class
+			? Long.class
+			: primitiveType == double.class
+			? Double.class
+			: null
+		;
+	}
+
+	/**
+	 * Creates the setter reading a persisted primitive and writing it into a value class field of the
+	 * corresponding wrapper type, boxing it on the way.
+	 * <p>
+	 * This is the layout-aware counterpart of the {@code primitive -> wrapper} translators in
+	 * {@link BinaryValueTranslators}, which box and write in one step at the field's memory offset and
+	 * therefore cannot reach a field the JVM lays out inside its owner.
+	 * <p>
+	 * Only the pairs those translators register are served, and only in the persistent form's own byte
+	 * order: their reversed-byte-order counterparts do not exist either, so a widening under a switched
+	 * byte order stays the loud failure it already was.
+	 *
+	 * @param field           the field to write; must not be {@code null}.
+	 * @param sourceType      the persisted member's primitive type.
+	 * @param switchByteOrder whether the persistent form uses the reversed byte order.
+	 *
+	 * @return the boxing setter, or {@code null} if the pair is not covered.
+	 */
+	public static BinaryValueSetter provideBoxingSetter(
+		final Field    field          ,
+		final Class<?> sourceType     ,
+		final boolean  switchByteOrder
+	)
+	{
+		/* Only the exact primitive-to-its-own-wrapper pairs are defined, as in the offset-based table,
+		 * so a widening to a different wrapper is not served here either.
+		 */
+		if(switchByteOrder || wrapperTypeOf(sourceType) != field.getType())
+		{
+			return null;
+		}
+
+		final FieldWriter writer = provideFieldWriter(field);
+
+		if(sourceType == byte.class)
+		{
+			return (srcAddress, target, trgOffset, handler) ->
+			{
+				writer.writeValue(target, Byte.valueOf(XMemory.get_byte(srcAddress)));
+				return srcAddress + XMemory.byteSize_byte();
+			};
+		}
+		if(sourceType == boolean.class)
+		{
+			return (srcAddress, target, trgOffset, handler) ->
+			{
+				writer.writeValue(target, Boolean.valueOf(XMemory.get_boolean(srcAddress)));
+				return srcAddress + XMemory.byteSize_boolean();
+			};
+		}
+		if(sourceType == short.class)
+		{
+			return (srcAddress, target, trgOffset, handler) ->
+			{
+				writer.writeValue(target, Short.valueOf(XMemory.get_short(srcAddress)));
+				return srcAddress + XMemory.byteSize_short();
+			};
+		}
+		if(sourceType == char.class)
+		{
+			return (srcAddress, target, trgOffset, handler) ->
+			{
+				writer.writeValue(target, Character.valueOf(XMemory.get_char(srcAddress)));
+				return srcAddress + XMemory.byteSize_char();
+			};
+		}
+		if(sourceType == int.class)
+		{
+			return (srcAddress, target, trgOffset, handler) ->
+			{
+				writer.writeValue(target, Integer.valueOf(XMemory.get_int(srcAddress)));
+				return srcAddress + XMemory.byteSize_int();
+			};
+		}
+		if(sourceType == float.class)
+		{
+			return (srcAddress, target, trgOffset, handler) ->
+			{
+				writer.writeValue(target, Float.valueOf(XMemory.get_float(srcAddress)));
+				return srcAddress + XMemory.byteSize_float();
+			};
+		}
+		if(sourceType == long.class)
+		{
+			return (srcAddress, target, trgOffset, handler) ->
+			{
+				writer.writeValue(target, Long.valueOf(XMemory.get_long(srcAddress)));
+				return srcAddress + XMemory.byteSize_long();
+			};
+		}
+		if(sourceType == double.class)
+		{
+			return (srcAddress, target, trgOffset, handler) ->
+			{
+				writer.writeValue(target, Double.valueOf(XMemory.get_double(srcAddress)));
+				return srcAddress + XMemory.byteSize_double();
+			};
+		}
+
+		return null;
+	}
+
+
+
 	///////////////////////////////////////////////////////////////////////////
 	// member types //
 	/////////////////
