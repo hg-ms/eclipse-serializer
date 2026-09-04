@@ -242,9 +242,14 @@ public final class BinaryValueHandleFunctions
 	 * {@link BinaryValueTranslators}, which box and write in one step at the field's memory offset and
 	 * therefore cannot reach a field the JVM lays out inside its owner.
 	 * <p>
-	 * Only the pairs those translators register are served, and only in the persistent form's own byte
-	 * order: their reversed-byte-order counterparts do not exist either, so a widening under a switched
-	 * byte order stays the loud failure it already was.
+	 * Only the pairs those translators register are served.
+	 * <p>
+	 * A reversed byte order is switched exactly once here, as {@link #provideReferenceSetter} does it:
+	 * this setter writes the boxed value into the instance, and nothing reads those bytes again. That
+	 * is not what the reversed translators in {@link BinaryValueTranslators} do - they switch twice,
+	 * because they serve the binary-to-binary path, whose output is re-read by a reversing setter. That
+	 * path cannot reach this method: it validates both members as primitive before delegating, and the
+	 * target here is a value class.
 	 *
 	 * @param field           the field to write; must not be {@code null}.
 	 * @param sourceType      the persisted member's primitive type.
@@ -261,13 +266,30 @@ public final class BinaryValueHandleFunctions
 		/* Only the exact primitive-to-its-own-wrapper pairs are defined, as in the offset-based table,
 		 * so a widening to a different wrapper is not served here either.
 		 */
-		if(switchByteOrder || wrapperTypeOf(sourceType) != field.getType())
+		if(wrapperTypeOf(sourceType) != field.getType())
 		{
 			return null;
 		}
 
 		final FieldWriter writer = provideFieldWriter(field);
 
+		return switchByteOrder
+			? provideReversedBoxingSetter(writer, sourceType)
+			: provideDirectBoxingSetter(writer, sourceType)
+		;
+	}
+
+	/**
+	 * @param writer     the writer reaching the field.
+	 * @param sourceType the persisted member's primitive type.
+	 *
+	 * @return the boxing setter for a persistent form in this JVM's own byte order.
+	 */
+	private static BinaryValueSetter provideDirectBoxingSetter(
+		final FieldWriter writer    ,
+		final Class<?>    sourceType
+	)
+	{
 		if(sourceType == byte.class)
 		{
 			return (srcAddress, target, trgOffset, handler) ->
@@ -329,6 +351,83 @@ public final class BinaryValueHandleFunctions
 			return (srcAddress, target, trgOffset, handler) ->
 			{
 				writer.writeValue(target, Double.valueOf(XMemory.get_double(srcAddress)));
+				return srcAddress + XMemory.byteSize_double();
+			};
+		}
+
+		return null;
+	}
+
+	/**
+	 * @param writer     the writer reaching the field.
+	 * @param sourceType the persisted member's primitive type.
+	 *
+	 * @return the boxing setter for a persistent form in the reversed byte order.
+	 */
+	private static BinaryValueSetter provideReversedBoxingSetter(
+		final FieldWriter writer    ,
+		final Class<?>    sourceType
+	)
+	{
+		// a single byte carries no byte order, so those two are the direct setters
+		if(sourceType == byte.class || sourceType == boolean.class)
+		{
+			return provideDirectBoxingSetter(writer, sourceType);
+		}
+
+		if(sourceType == short.class)
+		{
+			return (srcAddress, target, trgOffset, handler) ->
+			{
+				writer.writeValue(target, Short.valueOf(Short.reverseBytes(XMemory.get_short(srcAddress))));
+				return srcAddress + XMemory.byteSize_short();
+			};
+		}
+		if(sourceType == char.class)
+		{
+			return (srcAddress, target, trgOffset, handler) ->
+			{
+				writer.writeValue(target, Character.valueOf(Character.reverseBytes(XMemory.get_char(srcAddress))));
+				return srcAddress + XMemory.byteSize_char();
+			};
+		}
+		if(sourceType == int.class)
+		{
+			return (srcAddress, target, trgOffset, handler) ->
+			{
+				writer.writeValue(target, Integer.valueOf(Integer.reverseBytes(XMemory.get_int(srcAddress))));
+				return srcAddress + XMemory.byteSize_int();
+			};
+		}
+		if(sourceType == float.class)
+		{
+			return (srcAddress, target, trgOffset, handler) ->
+			{
+				/* The raw value is read as an int and reversed to produce the proper bit pattern before
+				 * the conversion, since Float.intBitsToFloat may not return a float NaN with exactly the
+				 * same bit pattern as its argument. Same reasoning as BinaryValueFunctions' reversed
+				 * float setter.
+				 */
+				final int reversed = Integer.reverseBytes(XMemory.get_int(srcAddress));
+				writer.writeValue(target, Float.valueOf(Float.intBitsToFloat(reversed)));
+				return srcAddress + XMemory.byteSize_float();
+			};
+		}
+		if(sourceType == long.class)
+		{
+			return (srcAddress, target, trgOffset, handler) ->
+			{
+				writer.writeValue(target, Long.valueOf(Long.reverseBytes(XMemory.get_long(srcAddress))));
+				return srcAddress + XMemory.byteSize_long();
+			};
+		}
+		if(sourceType == double.class)
+		{
+			return (srcAddress, target, trgOffset, handler) ->
+			{
+				// see the float case for why the raw bits are reversed before the conversion
+				final long reversed = Long.reverseBytes(XMemory.get_long(srcAddress));
+				writer.writeValue(target, Double.valueOf(Double.longBitsToDouble(reversed)));
 				return srcAddress + XMemory.byteSize_double();
 			};
 		}
