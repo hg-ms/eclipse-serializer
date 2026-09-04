@@ -206,10 +206,18 @@ public final class BinaryHandlerGenericEnum<T extends Enum<T>> extends AbstractB
 	@Override
 	protected BinaryValueSetter deriveSetter(final PersistenceTypeDefinitionMemberFieldReflective member)
 	{
-		return this.isUnsettableField(member)
-			? BinaryValueFunctions.getObjectValueSettingSkipper(member.type())
-			: BinaryValueFunctions.getObjectValueSetter(member.type(), this.isSwitchedByteOrder())
-		;
+		if(this.isUnsettableField(member))
+		{
+			return BinaryValueFunctions.getObjectValueSettingSkipper(member.type());
+		}
+
+		if(XReflect.isValueClass(member.type()))
+		{
+			// a value may be laid out inside its owner, where its offset holds no object reference
+			return BinaryValueHandleFunctions.provideReferenceSetter(member.field(), this.isSwitchedByteOrder());
+		}
+
+		return BinaryValueFunctions.getObjectValueSetter(member.type(), this.isSwitchedByteOrder());
 	}
 			
 	@Override

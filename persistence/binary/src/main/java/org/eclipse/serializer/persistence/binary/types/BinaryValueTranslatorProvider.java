@@ -23,10 +23,12 @@ import org.eclipse.serializer.collections.types.XGettingSequence;
 import org.eclipse.serializer.persistence.binary.exceptions.BinaryPersistenceException;
 import org.eclipse.serializer.persistence.types.PersistenceTypeDefinition;
 import org.eclipse.serializer.persistence.types.PersistenceTypeDefinitionMember;
+import org.eclipse.serializer.persistence.types.PersistenceTypeDefinitionMemberFieldReflective;
 import org.eclipse.serializer.persistence.types.PersistenceTypeDefinitionMemberFieldValueStruct;
 import org.eclipse.serializer.persistence.types.PersistenceTypeDescriptionMemberFieldValueStruct;
 import org.eclipse.serializer.persistence.types.PersistenceTypeDescriptionMember;
 import org.eclipse.serializer.persistence.types.PersistenceTypeHandler;
+import org.eclipse.serializer.reflect.XReflect;
 import org.eclipse.serializer.typing.TypeMappingLookup;
 
 
@@ -319,6 +321,40 @@ public interface BinaryValueTranslatorProvider
 			);
 		}
 		
+		/**
+		 * A field whose type is a value class may be laid out inside its owner, where the field's memory
+		 * offset does not address it: writing there misses the field and corrupts whatever is embedded at
+		 * that place instead. The value is written through a handle on the field, the way the current
+		 * handler's own setters do it.
+		 * <p>
+		 * Only a reference source can be redirected that way. Any other source form is decoded by a setter
+		 * that writes the decoded value at the offset itself, so it is refused here rather than written
+		 * blindly - writing it is precisely what this guards against.
+		 *
+		 * @param sourceMember    the legacy member being read.
+		 * @param targetMember    the current member being written, whose type is a value class.
+		 * @param switchByteOrder whether the persisted form has the opposite byte order.
+		 *
+		 * @return the setter writing the value into the target field.
+		 */
+		private static BinaryValueSetter provideValueTypeFieldSetter(
+			final PersistenceTypeDefinitionMember                sourceMember   ,
+			final PersistenceTypeDefinitionMemberFieldReflective targetMember   ,
+			final boolean                                        switchByteOrder
+		)
+		{
+			if(sourceMember.isReference())
+			{
+				return BinaryValueHandleFunctions.provideReferenceSetter(targetMember.field(), switchByteOrder);
+			}
+
+			throw new BinaryPersistenceException(
+				"Cannot read " + toTypedIdentifier(sourceMember) + " into " + toTypedIdentifier(targetMember)
+				+ ": a field whose type is a value class may be laid out inside its owner, which only a"
+				+ " reference value can be written into."
+			);
+		}
+
 		private static void validateIsReferenceType(final PersistenceTypeDescriptionMember member)
 		{
 			if(member.isReference())
@@ -410,6 +446,17 @@ public interface BinaryValueTranslatorProvider
 			if(sourceMember instanceof PersistenceTypeDescriptionMemberFieldValueStruct)
 			{
 				return this.provideInlinedValueTranslator(sourceMember, targetMember);
+			}
+
+			if(targetMember instanceof PersistenceTypeDefinitionMemberFieldReflective
+			&& XReflect.isValueClass(targetMember.type())
+			)
+			{
+				return provideValueTypeFieldSetter(
+					sourceMember,
+					(PersistenceTypeDefinitionMemberFieldReflective)targetMember,
+					this.switchByteOrder
+				);
 			}
 
 			// note: see #validateCompatibleTargetType for target field type compatability validation.
