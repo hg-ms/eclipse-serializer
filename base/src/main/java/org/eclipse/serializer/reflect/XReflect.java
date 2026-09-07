@@ -344,16 +344,24 @@ public final class XReflect
 	}
 
 	/**
-	 * Whether the runtime supports value classes at all. Useful to skip logic that can only ever
-	 * apply on a value class capable JVM.
+	 * Whether value classes are enabled in this runtime. Useful to skip logic that can only ever
+	 * apply where an identity-less instance can exist at all.
+	 * <p>
+	 * Deliberately not the mere presence of {@code Class#isValue}: since JEP 401 became a preview
+	 * feature of the mainline JDK, that method exists on every runtime and reports {@literal false}
+	 * for everything unless the JVM was started with {@code --enable-preview}. A wrapper type is
+	 * representative instead, the way {@code Persistence} reads the same state: while value classes
+	 * are a preview feature, a user-defined one is a preview class file that cannot even be loaded
+	 * without that flag, so no value instance can exist where the wrappers are not value classes.
 	 *
-	 * @return whether this JVM implements JEP 401.
+	 * @return whether an instance without identity can exist in this JVM.
 	 *
 	 * @see #isValueClass(Class)
 	 */
-	public static boolean isValueClassSupportingRuntime()
+	public static boolean isValueClassEnabledRuntime()
 	{
-		return CLASS_IS_VALUE != null;
+		// wrapper types are migrated to value classes as a group, so Integer is representative.
+		return isValueClass(Integer.class);
 	}
 
 	private static MethodHandle resolveClassIsValue()

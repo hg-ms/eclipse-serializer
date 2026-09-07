@@ -196,7 +196,7 @@ public interface BinaryValueTranslatorProvider
 			final Class<?> memberType = member.type();
 			if(memberType == null || !memberType.isPrimitive())
 			{
-				throw new BinaryPersistenceException("Unhandled type \"" + toTypedIdentifier(member) + ".");
+				throw new BinaryPersistenceException("Unhandled type " + toTypedIdentifier(member) + ".");
 			}
 		}
 		
@@ -232,7 +232,7 @@ public interface BinaryValueTranslatorProvider
 		)
 		{
 			throw new BinaryPersistenceException(
-				"Unhandled primitive type \"" + toTypedIdentifier(sourceMember) + "."
+				"Unhandled primitive type " + toTypedIdentifier(sourceMember) + "."
 			);
 		}
 		
@@ -360,7 +360,7 @@ public interface BinaryValueTranslatorProvider
 			}
 
 			throw new BinaryPersistenceException(
-				"Cannot read \"" + toTypedIdentifier(sourceMember) + " into \"" + toTypedIdentifier(targetMember)
+				"Cannot read " + toTypedIdentifier(sourceMember) + " into " + toTypedIdentifier(targetMember)
 				+ ": a field whose type is a value class may be laid out inside its owner, so only a"
 				+ " reference or a primitive widening into its own wrapper can be written into it."
 			);
@@ -374,7 +374,7 @@ public interface BinaryValueTranslatorProvider
 			}
 			
 			throw new BinaryPersistenceException(
-				"Non-reference type \"" + toTypedIdentifier(member) + "\" cannot be handled generically."
+				"Non-reference type " + toTypedIdentifier(member) + " cannot be handled generically."
 			);
 		}
 		
@@ -385,12 +385,12 @@ public interface BinaryValueTranslatorProvider
 				return;
 			}
 
-			throw new BinaryPersistenceException("Unhandled primitive type: \"" + type.getName() + ".");
+			throw new BinaryPersistenceException("Unhandled primitive type: \"" + type.getName() + "\".");
 		}
 		
 		private static String toTypedIdentifier(final PersistenceTypeDescriptionMember member)
 		{
-			return member.typeName() + "\" of "
+			return "\"" + member.typeName() + "\" of "
 				+ PersistenceTypeDescriptionMember.class.getSimpleName() + " " + member.identifier()
 			;
 		}
