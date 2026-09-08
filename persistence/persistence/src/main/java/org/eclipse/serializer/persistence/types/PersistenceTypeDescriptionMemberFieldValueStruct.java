@@ -237,6 +237,19 @@ extends PersistenceTypeDescriptionMemberFieldReflective
 			final XGettingSequence<? extends PersistenceTypeDescriptionMemberField> members
 		)
 		{
+			// the slot is fixed length, so the same value is both bounds; walking the members twice for it
+			// would be pointless, and a super() call cannot be preceded by a local at this language level.
+			this(typeName, declaringTypeName, name, members, calculateStructLength(members));
+		}
+
+		private Default(
+			final String typeName         ,
+			final String declaringTypeName,
+			final String name             ,
+			final XGettingSequence<? extends PersistenceTypeDescriptionMemberField> members,
+			final long   structLength
+		)
+		{
 			super(
 				typeName         ,
 				declaringTypeName,
@@ -244,8 +257,8 @@ extends PersistenceTypeDescriptionMemberFieldReflective
 				false            , // not a reference: the content is inlined, not pointed to
 				false            , // not a primitive: it is a composite of its own members
 				validateNoReferences(name, members),
-				calculateStructLength(members),
-				calculateStructLength(members)
+				structLength     ,
+				structLength
 			);
 			this.members = members.immure();
 		}
