@@ -68,9 +68,8 @@ implements ValidatingBinaryHandler<MonthDay, MonthDay>
 	///
 	/**
 	 * This handler transfers state in {@link #create} alone, so an instance it is handed here was
-	 * created elsewhere and cannot be updated. Validating instead of ignoring is what keeps a
-	 * divergence from dropping the persisted state silently, e.g. for an explicitly set root, whose
-	 * instance is registered for the persisted objectId before this handler ever sees the data.
+	 * created elsewhere and cannot be updated. Validating instead of ignoring keeps a divergence from
+	 * dropping the persisted state silently, e.g. for an explicitly set root.
 	 */
 	@Override
 	public void updateState(final Binary data, final MonthDay instance, final PersistenceLoadHandler handler)

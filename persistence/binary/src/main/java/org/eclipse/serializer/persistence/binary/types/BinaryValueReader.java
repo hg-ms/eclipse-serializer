@@ -44,7 +44,7 @@ public interface BinaryValueReader
 	/**
 	 * Provides the reader matching the passed field type.
 	 * <p>
-	 * Byte order needs no handling here: the reading methods of {@link Binary} are virtual and a load
+	 * Byte order needs no handling here: {@link Binary} reads through virtual accessors, and a load
 	 * item for persisted data in a non-native byte order already reverses every value it reads.
 	 *
 	 * @param type the field type whose value is to be read.

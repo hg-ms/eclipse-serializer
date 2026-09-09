@@ -27,9 +27,8 @@ import org.eclipse.serializer.reflect.XReflect;
  * Handler for {@link Year}.
  * <p>
  * Where {@link Year} is a value class, its instances cannot be created empty and populated
- * afterwards: the population write is not reliably visible on an identity-less instance, which
- * turned a loaded year into {@code 0}. It is therefore built from its persisted value through
- * {@link Year#of(int)}.
+ * afterwards: the population write is not reliably visible on an identity-less instance. It is
+ * therefore built from its persisted value through {@link Year#of(int)}.
  * <p>
  * The instance is created complete either way, since a plugin reusing the value-type handlers (e.g.
  * the REST viewer) relies on {@link #create} alone. Where the type is an ordinary class, an already

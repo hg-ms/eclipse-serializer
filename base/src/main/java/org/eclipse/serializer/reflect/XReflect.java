@@ -299,9 +299,8 @@ public final class XReflect
 	 * {@code java.lang.IdentityException}), while {@code ==} and
 	 * {@link System#identityHashCode(Object)} compare their content instead of their identity.
 	 * <p>
-	 * The check is done reflectively via {@code Class#isValue}, since this code is compiled against a
-	 * JDK baseline that does not have that method, yet. On a JVM without value class support, this
-	 * method consistently returns {@literal false}.
+	 * The check is done reflectively via {@code Class#isValue}, since the compile baseline does not
+	 * have that method. On a JVM without value class support, this method returns {@literal false}.
 	 *
 	 * @param c the {@link Class} to be tested, may be {@literal null}.
 	 *
@@ -347,12 +346,10 @@ public final class XReflect
 	 * Whether value classes are enabled in this runtime. Useful to skip logic that can only ever
 	 * apply where an identity-less instance can exist at all.
 	 * <p>
-	 * Deliberately not the mere presence of {@code Class#isValue}: since JEP 401 became a preview
-	 * feature of the mainline JDK, that method exists on every runtime and reports {@literal false}
-	 * for everything unless the JVM was started with {@code --enable-preview}. A wrapper type is
-	 * representative instead, the way {@code Persistence} reads the same state: while value classes
-	 * are a preview feature, a user-defined one is a preview class file that cannot even be loaded
-	 * without that flag, so no value instance can exist where the wrappers are not value classes.
+	 * Deliberately not the mere presence of {@code Class#isValue}: that method exists on every JDK
+	 * since JEP 401 became a preview feature and reports {@literal false} for everything unless the
+	 * JVM was started with {@code --enable-preview}. A wrapper type answers the actual state, since
+	 * a user-defined value class is a preview class file that cannot be loaded without that flag.
 	 *
 	 * @return whether an instance without identity can exist in this JVM.
 	 *

@@ -244,9 +244,7 @@ public final class BinaryValueHandleFunctions
 	 * <p>
 	 * Only the pairs those translators register are served, and only in this JVM's own byte order:
 	 * their reversed-byte-order counterparts do not exist either, so a widening under a switched byte
-	 * order stays the loud refusal it already was. Serving it would mean writing a family that nothing
-	 * can currently reach - the storage engine reads entity headers in the native order, so a
-	 * non-native target byte order does not survive a store at all.
+	 * order stays the loud refusal it already was.
 	 *
 	 * @param field           the field to write; must not be {@code null}.
 	 * @param sourceType      the persisted member's primitive type.

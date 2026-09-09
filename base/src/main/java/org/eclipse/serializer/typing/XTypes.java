@@ -193,11 +193,9 @@ public final class XTypes
 	 * field of an identity type, where identity handling compares that field by reference while value
 	 * handling would compare it by {@code equals}.
 	 * <p>
-	 * Three places read this, and they read it for different purposes: the equality strategy in
-	 * {@code XHashing.deriveHashEquality}, the string assembly in {@code XChars}, and - the one with
-	 * persistence-visible consequences - {@code BinaryHandlerGenericEnum}, where a {@code final} enum field
-	 * of a value type is treated as a value constant and is therefore <i>not</i> written back when the enum
-	 * is loaded.
+	 * The reader with persistence-visible consequences is {@code BinaryHandlerGenericEnum}: a {@code final}
+	 * enum field of a value type is treated as a value constant and is therefore <i>not</i> written back
+	 * when the enum is loaded.
 	 *
 	 * @param c the type to be checked.
 	 *

@@ -44,7 +44,7 @@ import org.eclipse.serializer.reflect.XReflect;
  * complete instances.
  * <p>
  * Where it is an ordinary class, it keeps being created empty and populated, so that its instances
- * stay registered by identity as they are today. A subclass whose instances must be built from their
+ * stay registered by identity as before. A subclass whose instances must be built from their
  * content on every JVM &mdash; because populating them would leave them incomplete &mdash; opts out
  * of that by overriding {@link #isCreationDeferred()} to a constant {@literal true}, which this base
  * reads in its constructor.

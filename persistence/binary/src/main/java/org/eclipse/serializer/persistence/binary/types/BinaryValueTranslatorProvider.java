@@ -294,10 +294,8 @@ public interface BinaryValueTranslatorProvider
 		 * matches the type's current one: the constructor takes every field, so a layout that has since gained
 		 * or lost one cannot be invoked from what was written.
 		 * <p>
-		 * Translating such a change would mean matching the described fields against the current ones and
-		 * defaulting what is missing, one level below the member matching that got us here. Until that exists,
-		 * the change is refused rather than approximated: silently defaulting the whole field would drop what
-		 * was stored without telling anyone.
+		 * Such a change is refused rather than approximated: silently defaulting the whole field would drop
+		 * what was stored without telling anyone.
 		 */
 		private BinaryValueSetter provideInlinedValueTranslator(
 			final PersistenceTypeDefinitionMember sourceMember,
@@ -502,8 +500,8 @@ public interface BinaryValueTranslatorProvider
 			)
 			{
 				/* This path rewrites one binary form into another, which for an inlined slot would mean
-				 * relaying out its content. Nothing reaches it today, because the handlers that use it never
-				 * inline; the guard is here so that changing that is a failure rather than a silent misread.
+				 * relaying out its content. No handler using it inlines, so the guard turns changing that
+				 * into a failure rather than a silent misread.
 				 */
 				throw new BinaryPersistenceException(
 					"Inlined field " + toTypedIdentifier(sourceMember) + " cannot be rewritten into the"

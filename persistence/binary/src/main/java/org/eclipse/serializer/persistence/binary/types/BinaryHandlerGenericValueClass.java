@@ -311,8 +311,8 @@ public final class BinaryHandlerGenericValueClass<T> extends AbstractBinaryHandl
 			fieldHandlerProvider,
 
 			/* This handler reads its members through readers rather than setters, since an identity-less
-			 * instance is constructed rather than populated. Inlining a field would need a reader for the
-			 * inlined layout, which does not exist yet, so the fields of a value class stay referenced.
+			 * instance is constructed rather than populated. There is no reader for an inlined layout,
+			 * so the fields of a value class stay referenced.
 			 */
 			PersistenceValueInliningResolver.Disabled(),
 			switchByteOrder

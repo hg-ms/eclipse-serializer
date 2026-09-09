@@ -77,9 +77,9 @@ public interface PersistenceValueInliningResolver
 	 * Creates the default resolver: it inlines every eligible field whose type the application itself
 	 * declares, and leaves the types the JDK declares referenced.
 	 * <p>
-	 * A JDK value type is excluded because its persistent form is not ours to decide. Several have custom
-	 * type handlers, and the cached instances among them are persisted under reserved constant ids
-	 * ({@link Persistence}); inlining would bypass both. Opting one in is possible through
+	 * A JDK value type is excluded because its persistent form is not the application's to decide: several
+	 * have custom type handlers, and the cached instances among them are persisted under reserved constant
+	 * ids ({@link Persistence}), both of which inlining would bypass. Opting one in is possible through
 	 * {@link #New(PersistenceTypeAnalyzer, BiPredicate)}, but it changes the layout of every owner that
 	 * has such a field, so it is a decision to take deliberately.
 	 *
