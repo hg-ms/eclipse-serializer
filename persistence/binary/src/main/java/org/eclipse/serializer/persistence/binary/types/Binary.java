@@ -1447,7 +1447,8 @@ public abstract class Binary implements Chunk
 	 * @param arrayOffset     the first element's index.
 	 * @param arrayLength     the number of elements.
 	 * @param storedReferents the element a previous store wrote per slot, overwritten with the one
-	 *                        written now.
+	 *                        written now. Indexed absolutely, see
+	 *                        {@link #storeReferencesAsList(long, PersistenceStoreHandler, Object[], int, int, Object[], long[])}.
 	 * @param storedObjectIds the object id it was written under, overwritten with the one written
 	 *                        now. Either array being {@literal null} applies every element.
 	 *
@@ -2183,6 +2184,9 @@ public abstract class Binary implements Chunk
 	 * describe the previous store again once it is committed - and must therefore not be the arrays a
 	 * previous store is still described by: a store that is not committed may not change what the
 	 * persisted form of this entity references.
+	 * <p>
+	 * Both are indexed like {@code array} itself, by the absolute element index rather than relative
+	 * to {@code offset}, so each has to be at least {@code offset + length} long.
 	 * <p>
 	 * Only applicable while the entity holding this list still references the recorded ids, which is
 	 * what keeps their entities reachable.
