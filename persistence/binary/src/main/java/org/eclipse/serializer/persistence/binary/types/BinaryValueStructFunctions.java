@@ -21,6 +21,7 @@ import static org.eclipse.serializer.persistence.types.PersistenceTypeDescriptio
 import java.lang.invoke.MethodHandle;
 import java.lang.reflect.Field;
 
+import org.eclipse.serializer.chars.VarString;
 import org.eclipse.serializer.collections.HashEnum;
 import org.eclipse.serializer.collections.types.XGettingEnum;
 import org.eclipse.serializer.collections.types.XGettingSequence;
@@ -205,6 +206,193 @@ public final class BinaryValueStructFunctions
 			member.persistentMinimumLength(),
 			switchByteOrder
 		);
+	}
+
+	/**
+	 * Creates the setter for an inlined field whose described layout has since gained or lost a member,
+	 * which is what an inlined type evolving under existing data produces.
+	 * <p>
+	 * The described members are matched to the current ones by name. A member the type no longer has is
+	 * stepped over by its persisted length, and a member it has gained takes its type's default - the same
+	 * answer legacy mapping gives for a referenced field. What is not translated is a member whose type
+	 * changed: its bytes would have to be converted rather than placed, and placing them would misread
+	 * silently, so that is refused.
+	 * <p>
+	 * The two members describe the same field of the same owner, paired by the legacy mapping, so a renamed
+	 * inlined type is already accounted for by the time this is reached. A renamed member of that type is
+	 * not: it reads as one member lost and another gained, and its value is not carried over.
+	 *
+	 * @param sourceMember    the inlined member as the legacy definition describes it.
+	 * @param targetMember    the inlined member as the current type describes it.
+	 * @param switchByteOrder whether the persistent form uses the reversed byte order.
+	 *
+	 * @return the setter for the evolved inlined field.
+	 */
+	public static BinaryValueSetter provideEvolvingSetter(
+		final PersistenceTypeDefinitionMemberFieldValueStruct sourceMember   ,
+		final PersistenceTypeDefinitionMemberFieldValueStruct targetMember   ,
+		final boolean                                         switchByteOrder
+	)
+	{
+		final Class<?> valueType = targetMember.type();
+		if(valueType == null)
+		{
+			throw new BinaryPersistenceException(
+				"Inlined field " + targetMember.identifier() + " has no runtime type."
+			);
+		}
+
+		/* The order the constructor accepts, derived from the type itself the way the unchanged path does,
+		 * and restricted to what the current layout describes.
+		 */
+		final HashEnum<Field> declarationOrder = HashEnum.New();
+		for(final Field field : valueType.getDeclaredFields())
+		{
+			if(!XReflect.isStatic(field) && isDescribed(targetMember, field))
+			{
+				declarationOrder.add(field);
+			}
+		}
+
+		final int              count   = sourceMember.members().intSize();
+		final StructReader[]   readers = new StructReader[count];
+		final int[]            targets = new int[count];
+		final HashEnum<String> carried = HashEnum.New();
+
+		int i = 0;
+		for(final PersistenceTypeDefinitionMemberField source : sourceMember.members())
+		{
+			final Field field = findField(declarationOrder, source.name());
+			if(field == null)
+			{
+				// the type no longer has this member: step over what was written for it
+				final long skipped = source.persistentMinimumLength();
+				readers[i] = (address, args, index) -> skipped;
+				targets[i] = 0;
+			}
+			else
+			{
+				if(!field.getType().getName().equals(source.typeName()))
+				{
+					throw new BinaryPersistenceException(
+						"Inlined layout member " + source.identifier() + " was persisted as "
+						+ source.typeName() + " and is now " + field.getType().getName()
+						+ ". Converting the type of an inlined member is not supported."
+					);
+				}
+				readers[i] = provideReader(field.getType(), switchByteOrder);
+				targets[i] = indexOf(declarationOrder, field);
+				carried.add(field.getName());
+			}
+			i++;
+		}
+
+		final MethodHandle constructor = BinaryHandlerGenericValueClass.resolveConstructor(
+			valueType,
+			BinaryHandlerGenericValueClass.toParameterTypes(declarationOrder),
+			declarationOrder
+		);
+
+		return new EvolvingStructSetter(
+			BinaryValueHandleFunctions.provideFieldWriter(targetMember.field()),
+			valueType                                                         ,
+			readers                                                           ,
+			targets                                                           ,
+			constructor                                                       ,
+			defaultArguments(declarationOrder)                                ,
+			defaultedNames(declarationOrder, carried)                         ,
+			sourceMember.persistentMinimumLength()
+		);
+	}
+
+	/**
+	 * The argument array a construction starts from, so a member the persisted layout does not carry takes
+	 * its type's default.
+	 */
+	private static Object[] defaultArguments(final XGettingEnum<Field> declarationOrder)
+	{
+		final Object[] defaults = new Object[declarationOrder.intSize()];
+
+		/* Deliberately not a conditional-operator chain: mixing the box types in one would have binary
+		 * numeric promotion widen every branch to the same type, so every default would come back as the
+		 * widest of them and the constructor would reject it.
+		 */
+		int i = 0;
+		for(final Field field : declarationOrder)
+		{
+			defaults[i++] = defaultValue(field.getType());
+		}
+
+		return defaults;
+	}
+
+	private static Object defaultValue(final Class<?> type)
+	{
+		if(type == byte.class)
+		{
+			return Byte.valueOf((byte)0);
+		}
+		if(type == boolean.class)
+		{
+			return Boolean.FALSE;
+		}
+		if(type == short.class)
+		{
+			return Short.valueOf((short)0);
+		}
+		if(type == char.class)
+		{
+			return Character.valueOf('\0');
+		}
+		if(type == int.class)
+		{
+			return Integer.valueOf(0);
+		}
+		if(type == float.class)
+		{
+			return Float.valueOf(0f);
+		}
+		if(type == long.class)
+		{
+			return Long.valueOf(0L);
+		}
+		if(type == double.class)
+		{
+			return Double.valueOf(0d);
+		}
+
+		throw new BinaryPersistenceException("Type cannot be inlined: " + type.getName());
+	}
+
+	/** The members the persisted layout does not carry, named so a rejected construction can say so. */
+	private static String defaultedNames(
+		final XGettingEnum<Field>  declarationOrder,
+		final XGettingEnum<String> carried
+	)
+	{
+		final VarString vs = VarString.New();
+		for(final Field field : declarationOrder)
+		{
+			if(!carried.contains(field.getName()))
+			{
+				vs.add(vs.isEmpty() ? "" : ", ").add(field.getName());
+			}
+		}
+
+		return vs.toString();
+	}
+
+	private static Field findField(final XGettingEnum<Field> fields, final String name)
+	{
+		for(final Field field : fields)
+		{
+			if(field.getName().equals(name))
+			{
+				return field;
+			}
+		}
+
+		return null;
 	}
 
 	private static boolean isDescribed(
@@ -436,6 +624,100 @@ public final class BinaryValueStructFunctions
 			}
 
 			return address;
+		}
+
+	}
+
+	/**
+	 * Reads an inlined slot whose described layout differs from the current one: the argument array starts
+	 * from the current type's defaults, so a member the persisted layout does not carry keeps its default,
+	 * and a reader for a member the type no longer has advances past it without writing.
+	 */
+	private static final class EvolvingStructSetter implements BinaryValueSetter
+	{
+		private final FieldWriter    ownerWriter    ;
+		private final Class<?>       valueType      ;
+		private final StructReader[] readers        ;
+		private final int[]          targets        ;
+		private final MethodHandle   constructor    ;
+		private final Object[]       defaults       ;
+		private final String         defaultedNames ;
+		private final long           structLength   ;
+
+		EvolvingStructSetter(
+			final FieldWriter    ownerWriter   ,
+			final Class<?>       valueType     ,
+			final StructReader[] readers       ,
+			final int[]          targets       ,
+			final MethodHandle   constructor   ,
+			final Object[]       defaults      ,
+			final String         defaultedNames,
+			final long           structLength
+		)
+		{
+			super();
+			this.ownerWriter    = ownerWriter   ;
+			this.valueType      = valueType     ;
+			this.readers        = readers       ;
+			this.targets        = targets       ;
+			this.constructor    = constructor   ;
+			this.defaults       = defaults      ;
+			this.defaultedNames = defaultedNames;
+			this.structLength   = structLength  ;
+		}
+
+		@Override
+		public long setValueToMemory(
+			final long                   srcAddress,
+			final Object                 target    ,
+			final long                   trgOffset ,
+			final PersistenceLoadHandler handler
+		)
+		{
+			if(XMemory.get_byte(srcAddress) == NULL_MARKER_ABSENT)
+			{
+				this.ownerWriter.writeValue(target, null);
+				return srcAddress + this.structLength;
+			}
+
+			final Object[] args = this.defaults.clone();
+
+			long address = srcAddress + NULL_MARKER_LENGTH;
+			for(int i = 0; i < this.readers.length; i++)
+			{
+				address += this.readers[i].readValue(address, args, this.targets[i]);
+			}
+
+			this.ownerWriter.writeValue(target, this.createValue(args));
+
+			return address;
+		}
+
+		private Object createValue(final Object[] args)
+		{
+			try
+			{
+				return (Object)this.constructor.invokeExact(args);
+			}
+			catch(final Error e)
+			{
+				throw e;
+			}
+			catch(final Throwable t)
+			{
+				/* Naming the defaulted members is the point: a constructor validating its arguments is the
+				 * likely reason a construction that used to work now fails, and the defaulted value is what
+				 * it rejected.
+				 */
+				throw new BinaryPersistenceException(
+					"Could not construct inlined instance of " + this.valueType.getName()
+					+ (this.defaultedNames.isEmpty()
+						? ""
+						: ", whose persisted layout did not carry " + this.defaultedNames
+						+ " so it was constructed with the default")
+					, t
+				);
+			}
 		}
 
 	}

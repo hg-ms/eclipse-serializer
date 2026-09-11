@@ -294,8 +294,13 @@ public interface BinaryValueTranslatorProvider
 		 * matches the type's current one: the constructor takes every field, so a layout that has since gained
 		 * or lost one cannot be invoked from what was written.
 		 * <p>
-		 * Such a change is refused rather than approximated: silently defaulting the whole field would drop
-		 * what was stored without telling anyone.
+		 * A layout that has since gained or lost a member is translated member by member, matched by name:
+		 * a gained one takes its type's default and a lost one is stepped over, which is the answer legacy
+		 * mapping already gives for a referenced field. Defaulting the field as a whole is what would drop
+		 * what was stored without saying so, and is not what happens here.
+		 * <p>
+		 * Two changes are still refused, because placing the bytes would misread them rather than convert
+		 * them: a member whose type changed, and a current form that is not inlined at all.
 		 */
 		private BinaryValueSetter provideInlinedValueTranslator(
 			final PersistenceTypeDefinitionMember sourceMember,
@@ -312,10 +317,25 @@ public interface BinaryValueTranslatorProvider
 				);
 			}
 
+			/* The layout differs, but both describe the same field of the same owner, paired by the legacy
+			 * mapping, so their members can be matched by name: one the type has gained takes its default,
+			 * one it has lost is stepped over. A member whose type changed is refused there.
+			 */
+			if(sourceMember instanceof PersistenceTypeDefinitionMemberFieldValueStruct
+			&& targetMember instanceof PersistenceTypeDefinitionMemberFieldValueStruct
+			)
+			{
+				return BinaryValueStructFunctions.provideEvolvingSetter(
+					(PersistenceTypeDefinitionMemberFieldValueStruct)sourceMember,
+					(PersistenceTypeDefinitionMemberFieldValueStruct)targetMember,
+					this.switchByteOrder
+				);
+			}
+
 			throw new BinaryPersistenceException(
-				"The inlined layout of " + toTypedIdentifier(sourceMember) + " has changed and cannot be read"
-				+ " into " + toTypedIdentifier(targetMember) + ". Inlining a type fixes its layout in every"
-				+ " owner that inlines it."
+				"The inlined layout of " + toTypedIdentifier(sourceMember) + " cannot be read into "
+				+ toTypedIdentifier(targetMember) + ": the current form is not an inlined one, and an"
+				+ " inlined slot carries no object id to reference the value by instead."
 			);
 		}
 		
