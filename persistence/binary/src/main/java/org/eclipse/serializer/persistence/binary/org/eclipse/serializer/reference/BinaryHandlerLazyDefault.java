@@ -131,10 +131,10 @@ public final class BinaryHandlerLazyDefault extends AbstractBinaryHandlerCustom<
 				/* A value instance has no identity, so applying it would assign a new objectId on every
 				 * store and invalidate the existing link. That is unnecessary: the referent is immutable,
 				 * so the entity the link points to can never become stale. The established link is kept
-				 * and the referent is referenced instead of stored again, exactly like an unloaded one.
+				 * and the referent is referenced instead of stored again, exactly like an unloaded one -
+				 * but with the referent at hand, so a target missing that entity can have it re-stored.
 				 */
-				referenceOid = instance.objectId();
-				handler.noteTrustedReference(referenceOid);
+				referenceOid = handler.applyKnown(referent, instance.objectId());
 			}
 		}
 		else

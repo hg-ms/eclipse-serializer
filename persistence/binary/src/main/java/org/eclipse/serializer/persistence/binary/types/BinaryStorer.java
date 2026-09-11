@@ -553,6 +553,28 @@ public interface BinaryStorer extends PersistenceStorer, PersistenceStoringCallb
 		}
 		
 		@Override
+		public <T> long applyKnown(final T instance, final long knownObjectId)
+		{
+			/*
+			 * An eager store must reach every instance, so what the caller knows about a previous store
+			 * is irrelevant to it - and the ids it assigns are what the caller has to remember instead.
+			 */
+			if(instance == null || Swizzling.isNotFoundId(knownObjectId) || this.isEagerStoring())
+			{
+				return this.apply(instance);
+			}
+
+			/*
+			 * Referenced without being stored in this commit, which is exactly the state ensureObjectId
+			 * reports for an instance the object registry already knows - so it is registered the same
+			 * way, and gets the same pin, trusted-id record and target-side validation.
+			 */
+			this.registerSkippedOptional(knownObjectId, instance, null);
+
+			return knownObjectId;
+		}
+
+		@Override
 		public <T> long applyEager(final T instance, final PersistenceTypeHandler<Binary, T> localTypeHandler)
 		{
 			// concurrency: lookupOid() and ensureObjectId() lock internally, the rest is thread-local
