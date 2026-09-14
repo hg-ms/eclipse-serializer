@@ -169,12 +169,22 @@ extends PersistenceTypeDescriptionMemberFieldReflective
 		;
 	}
 
+	/**
+	 * Unlike every other member kind, the inlined layout's own members are compared by name as well as by
+	 * type, which is what {@link PersistenceTypeDescriptionMember#equalsStructure} does.
+	 * <p>
+	 * Ignoring the name is safe where the legacy mapping pairs the members by name separately and only the
+	 * bytes still have to be confirmed, which is the case for the member this one is - the field of its
+	 * owner. Nothing pairs the members <i>inside</i> the layout, though: they would be paired by position
+	 * alone, so two same-typed fields that swapped places would read layout-equal and each take the other's
+	 * value with nothing said. The member's own name stays out of it, as it does everywhere else.
+	 */
 	@Override
 	public default boolean equalsLayout(final PersistenceTypeDescriptionMember other)
 	{
 		return PersistenceTypeDescriptionMemberFieldReflective.super.equalsLayout(other)
 			&& other instanceof PersistenceTypeDescriptionMemberFieldValueStruct
-			&& PersistenceTypeDescriptionMember.equalLayouts(
+			&& PersistenceTypeDescriptionMember.equalStructures(
 				this.members(),
 				((PersistenceTypeDescriptionMemberFieldValueStruct)other).members()
 			)

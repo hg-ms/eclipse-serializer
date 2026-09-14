@@ -335,8 +335,9 @@ public interface BinaryValueTranslatorProvider
 		/**
 		 * An inlined slot carries the field's content rather than an object id, so reading it means
 		 * constructing the instance from that content. That is only possible while the described layout still
-		 * matches the type's current one: the constructor takes every field, so a layout that has since gained
-		 * or lost one cannot be invoked from what was written.
+		 * matches the type's current one, member for member and name for name: the constructor takes every
+		 * field, so a layout that has since gained or lost one cannot be invoked from what was written, and
+		 * one whose members merely swapped places would have each of them take the other's value.
 		 * <p>
 		 * A layout that has since gained or lost a member is translated member by member, matched by name:
 		 * a gained one takes its type's default and a lost one is stepped over, which is the answer legacy
@@ -351,12 +352,17 @@ public interface BinaryValueTranslatorProvider
 			final PersistenceTypeDefinitionMember targetMember
 		)
 		{
+			/* Derived from the target, not the source: the two describe the same layout by the same names
+			 * here, but only the target is bound to the runtime field it has to be written through. A legacy
+			 * member deliberately binds no field once its declaring type was renamed, and the value would
+			 * then be written through nothing at all.
+			 */
 			if(sourceMember.equalsLayout(targetMember)
-			&& sourceMember instanceof PersistenceTypeDefinitionMemberFieldValueStruct
+			&& targetMember instanceof PersistenceTypeDefinitionMemberFieldValueStruct
 			)
 			{
 				return BinaryValueStructFunctions.provideSetter(
-					(PersistenceTypeDefinitionMemberFieldValueStruct)sourceMember,
+					(PersistenceTypeDefinitionMemberFieldValueStruct)targetMember,
 					this.switchByteOrder
 				);
 			}
