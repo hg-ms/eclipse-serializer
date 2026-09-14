@@ -34,7 +34,11 @@ import org.eclipse.serializer.persistence.types.PersistenceStoreHandler;
 import org.eclipse.serializer.persistence.types.PersistenceTypeDefinitionMemberField;
 import org.eclipse.serializer.persistence.types.PersistenceTypeDefinitionMemberFieldValueStruct;
 import org.eclipse.serializer.persistence.types.PersistenceTypeDescriptionMemberFieldValueStruct;
+import org.eclipse.serializer.persistence.types.PersistenceTypeDescriptionResolver;
 import org.eclipse.serializer.reflect.XReflect;
+import org.eclipse.serializer.typing.KeyValue;
+import org.eclipse.serializer.util.logging.Logging;
+import org.slf4j.Logger;
 
 /**
  * Storer and setter for a field that is written into its owner's own binary form rather than referenced by
@@ -51,6 +55,14 @@ import org.eclipse.serializer.reflect.XReflect;
  */
 public final class BinaryValueStructFunctions
 {
+	///////////////////////////////////////////////////////////////////////////
+	// static fields //
+	//////////////////
+
+	private final static Logger logger = Logging.getLogger(BinaryValueStructFunctions.class);
+
+
+
 	///////////////////////////////////////////////////////////////////////////
 	// static methods //
 	///////////////////
@@ -220,17 +232,25 @@ public final class BinaryValueStructFunctions
 	 * <p>
 	 * The two members describe the same field of the same owner, paired by the legacy mapping, so a renamed
 	 * inlined type is already accounted for by the time this is reached. A renamed member of that type is
-	 * not: it reads as one member lost and another gained, and its value is not carried over.
+	 * matched by the refactoring mapping, keyed by the member's own identifier ({@code <valueType>#<field>})
+	 * exactly as it would be while the field is still referenced. A rule mapping it to {@code null} states
+	 * that it was removed deliberately, which discards its persisted value without further complaint.
+	 * <p>
+	 * A member lost and another of the same type gained, neither of them mapped, is refused: on the wire a
+	 * rename is those same two facts, so carrying the value would guess and dropping it would lose it
+	 * silently. A mapping entry - to the gained member, or to {@code null} - states which it is.
 	 *
-	 * @param sourceMember    the inlined member as the legacy definition describes it.
-	 * @param targetMember    the inlined member as the current type describes it.
-	 * @param switchByteOrder whether the persistent form uses the reversed byte order.
+	 * @param sourceMember        the inlined member as the legacy definition describes it.
+	 * @param targetMember        the inlined member as the current type describes it.
+	 * @param refactoringResolver the resolver consulted for member mappings; may be {@code null}.
+	 * @param switchByteOrder     whether the persistent form uses the reversed byte order.
 	 *
 	 * @return the setter for the evolved inlined field.
 	 */
 	public static BinaryValueSetter provideEvolvingSetter(
-		final PersistenceTypeDefinitionMemberFieldValueStruct sourceMember   ,
-		final PersistenceTypeDefinitionMemberFieldValueStruct targetMember   ,
+		final PersistenceTypeDefinitionMemberFieldValueStruct sourceMember       ,
+		final PersistenceTypeDefinitionMemberFieldValueStruct targetMember       ,
+		final PersistenceTypeDescriptionResolver              refactoringResolver,
 		final boolean                                         switchByteOrder
 	)
 	{
@@ -259,16 +279,28 @@ public final class BinaryValueStructFunctions
 		final int[]            targets = new int[count];
 		final HashEnum<String> carried = HashEnum.New();
 
+		// persisted members whose value is discarded without a rule saying so, which is worth reporting
+		final HashEnum<PersistenceTypeDefinitionMemberField> dropped = HashEnum.New();
+
 		int i = 0;
 		for(final PersistenceTypeDefinitionMemberField source : sourceMember.members())
 		{
-			final Field field = findField(declarationOrder, source.name());
+			// null means a mapping rule states the member was removed deliberately
+			final String targetName = resolveTargetName(refactoringResolver, targetMember, source);
+			final Field  field      = targetName == null
+				? null
+				: findField(declarationOrder, targetName)
+			;
 			if(field == null)
 			{
 				// the type no longer has this member: step over what was written for it
 				final long skipped = source.persistentMinimumLength();
 				readers[i] = (address, args, index) -> skipped;
 				targets[i] = 0;
+				if(targetName != null)
+				{
+					dropped.add(source);
+				}
 			}
 			else
 			{
@@ -282,10 +314,32 @@ public final class BinaryValueStructFunctions
 				}
 				readers[i] = provideReader(field.getType(), switchByteOrder);
 				targets[i] = indexOf(declarationOrder, field);
-				carried.add(field.getName());
+				if(!carried.add(field.getName()))
+				{
+					/* Two persisted members reading into one, which only a mapping rule can produce: the
+					 * construction would take whichever is read last and discard the other.
+					 */
+					throw new BinaryPersistenceException(
+						"Inlined layout of " + targetMember.identifier() + " reads more than one persisted"
+						+ " member into " + field.getName() + ", the last of them " + source.identifier()
+						+ ". Every persisted member needs a target of its own, or none."
+					);
+				}
 			}
 			i++;
 		}
+
+		final HashEnum<Field> defaulted = HashEnum.New();
+		for(final Field field : declarationOrder)
+		{
+			if(!carried.contains(field.getName()))
+			{
+				defaulted.add(field);
+			}
+		}
+
+		validateUnambiguousEvolution(targetMember, dropped, defaulted);
+		reportEvolution(targetMember, carried, dropped, defaulted);
 
 		final MethodHandle constructor = BinaryHandlerGenericValueClass.resolveConstructor(
 			valueType,
@@ -300,9 +354,146 @@ public final class BinaryValueStructFunctions
 			targets                                                           ,
 			constructor                                                       ,
 			defaultArguments(declarationOrder)                                ,
-			defaultedNames(declarationOrder, carried)                         ,
+			fieldNames(defaulted)                                             ,
 			sourceMember.persistentMinimumLength()
 		);
+	}
+
+	/**
+	 * The name of the current member the persisted one is to be read into: the one a refactoring rule names,
+	 * or the persisted member's own name where no rule applies.
+	 * <p>
+	 * The rule is keyed by the member's own identifier, which is the inlined type's name and the field's,
+	 * the same key a rename of that field carries while it is still referenced rather than inlined.
+	 *
+	 * @return the current member's name, or {@code null} where a rule states the member was removed.
+	 */
+	private static String resolveTargetName(
+		final PersistenceTypeDescriptionResolver              resolver    ,
+		final PersistenceTypeDefinitionMemberFieldValueStruct targetMember,
+		final PersistenceTypeDefinitionMemberField            source
+	)
+	{
+		if(resolver == null)
+		{
+			return source.name();
+		}
+
+		final KeyValue<String, String> entry = resolver.lookup(source.identifier());
+		if(entry == null)
+		{
+			return source.name();
+		}
+		if(entry.value() == null)
+		{
+			// can be null for members explicitly marked as deleted
+			return null;
+		}
+
+		for(final PersistenceTypeDefinitionMemberField member : targetMember.members())
+		{
+			if(entry.value().equals(member.identifier())
+			|| entry.value().equals(XReflect.fieldIdentifierDelimiter() + member.name())
+			)
+			{
+				return member.name();
+			}
+		}
+
+		throw new BinaryPersistenceException(
+			"Unresolvable inlined member refactoring mapping: " + source.identifier() + " -> \""
+			+ entry.value() + "\", which is no member of the inlined layout of " + targetMember.identifier()
+			+ "."
+		);
+	}
+
+	/**
+	 * Refuses a layout that lost one member and gained another of the same type without either of them being
+	 * mapped.
+	 * <p>
+	 * A rename and a removal plus an addition are the same two facts on the wire, so there is nothing to tell
+	 * them apart by: carrying the value over would guess, and the alternative loses it without saying so. A
+	 * mapping entry states which of the two it is, and the refusal names the entry to write.
+	 */
+	private static void validateUnambiguousEvolution(
+		final PersistenceTypeDefinitionMemberFieldValueStruct              targetMember,
+		final XGettingEnum<? extends PersistenceTypeDefinitionMemberField> dropped     ,
+		final XGettingEnum<Field>                                          defaulted
+	)
+	{
+		for(final PersistenceTypeDefinitionMemberField drop : dropped)
+		{
+			for(final Field gain : defaulted)
+			{
+				if(!gain.getType().getName().equals(drop.typeName()))
+				{
+					continue;
+				}
+
+				throw new BinaryPersistenceException(
+					"Inlined layout of " + targetMember.identifier() + " lost member " + drop.identifier()
+					+ " and gained member " + gain.getName() + ", both of type " + drop.typeName()
+					+ ". A renamed member and a removed one plus an added one cannot be told apart here,"
+					+ " so the persisted value would either be placed by guess or discarded silently."
+					+ " State which it is by mapping \"" + drop.identifier() + "\" to \""
+					+ gain.getDeclaringClass().getName() + XReflect.fieldIdentifierDelimiter()
+					+ gain.getName() + "\" to carry the value over, or to null to discard it."
+				);
+			}
+		}
+	}
+
+	/**
+	 * States what became of the persisted layout's members, which the mapping report for the owner cannot
+	 * show: there the inlined field is one member mapped to one member, and this is what happened inside it.
+	 */
+	private static void reportEvolution(
+		final PersistenceTypeDefinitionMemberFieldValueStruct              targetMember,
+		final XGettingEnum<String>                                         carried     ,
+		final XGettingEnum<? extends PersistenceTypeDefinitionMemberField> dropped     ,
+		final XGettingEnum<Field>                                          defaulted
+	)
+	{
+		final VarString vs = VarString.New()
+			.add("Inlined layout of ").add(targetMember.identifier())
+			.add(" differs from the persisted one. Carried: ").list(", ", carried)
+			.add(". Defaulted: ").add(fieldNames(defaulted))
+			.add(". Dropped: ").add(memberNames(dropped))
+			.add('.')
+		;
+
+		if(dropped.isEmpty())
+		{
+			logger.info(vs.toString());
+		}
+		else
+		{
+			logger.warn(vs.add(" A dropped member's persisted value is discarded.").toString());
+		}
+	}
+
+	private static String fieldNames(final XGettingEnum<Field> fields)
+	{
+		final VarString vs = VarString.New();
+		for(final Field field : fields)
+		{
+			vs.add(vs.isEmpty() ? "" : ", ").add(field.getName());
+		}
+
+		return vs.toString();
+	}
+
+	private static String memberNames(
+		final XGettingEnum<? extends PersistenceTypeDefinitionMemberField> members
+	)
+	{
+		final VarString vs = VarString.New();
+		for(final PersistenceTypeDefinitionMemberField member : members)
+		{
+			vs.add(vs.isEmpty() ? "" : ", ").add(member.name());
+		}
+
+		return vs.toString();
 	}
 
 	/**
@@ -362,24 +553,6 @@ public final class BinaryValueStructFunctions
 		}
 
 		throw new BinaryPersistenceException("Type cannot be inlined: " + type.getName());
-	}
-
-	/** The members the persisted layout does not carry, named so a rejected construction can say so. */
-	private static String defaultedNames(
-		final XGettingEnum<Field>  declarationOrder,
-		final XGettingEnum<String> carried
-	)
-	{
-		final VarString vs = VarString.New();
-		for(final Field field : declarationOrder)
-		{
-			if(!carried.contains(field.getName()))
-			{
-				vs.add(vs.isEmpty() ? "" : ", ").add(field.getName());
-			}
-		}
-
-		return vs.toString();
 	}
 
 	private static Field findField(final XGettingEnum<Field> fields, final String name)

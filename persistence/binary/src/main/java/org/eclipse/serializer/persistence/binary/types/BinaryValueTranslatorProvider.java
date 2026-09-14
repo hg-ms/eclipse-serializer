@@ -27,6 +27,8 @@ import org.eclipse.serializer.persistence.types.PersistenceTypeDefinitionMemberF
 import org.eclipse.serializer.persistence.types.PersistenceTypeDefinitionMemberFieldValueStruct;
 import org.eclipse.serializer.persistence.types.PersistenceTypeDescriptionMemberFieldValueStruct;
 import org.eclipse.serializer.persistence.types.PersistenceTypeDescriptionMember;
+import org.eclipse.serializer.persistence.types.PersistenceTypeDescriptionResolver;
+import org.eclipse.serializer.persistence.types.PersistenceTypeDescriptionResolverProvider;
 import org.eclipse.serializer.persistence.types.PersistenceTypeHandler;
 import org.eclipse.serializer.reflect.XReflect;
 import org.eclipse.serializer.typing.TypeMappingLookup;
@@ -96,10 +98,41 @@ public interface BinaryValueTranslatorProvider
 		final boolean                                                     switchByteOrder
 	)
 	{
+		return New(
+			customTranslatorLookup  ,
+			translatorKeyBuilders   ,
+			translatorLookupProvider,
+			null                    ,
+			switchByteOrder
+		);
+	}
+
+	/**
+	 * Creates a new default {@link BinaryValueTranslatorProvider} consulting the passed resolver for the
+	 * members of an inlined layout, which the legacy type mapping does not reach: it pairs the inlined field
+	 * as a whole, while the value type's own fields are members inside that pair.
+	 *
+	 * @param customTranslatorLookup          optional map of registered custom translators keyed by lookup key, may be {@code null}.
+	 * @param translatorKeyBuilders           optional sequence of key builders to consult, may be {@code null} or empty.
+	 * @param translatorLookupProvider        the generic primitive-to-primitive translator table provider.
+	 * @param typeDescriptionResolverProvider the refactoring resolver provider, may be {@code null}.
+	 * @param switchByteOrder                 whether the persisted form uses a non-native byte order.
+	 *
+	 * @return the newly created provider.
+	 */
+	public static BinaryValueTranslatorProvider New(
+		final XGettingMap<String, BinaryValueSetter>                      customTranslatorLookup         ,
+		final XGettingSequence<? extends BinaryValueTranslatorKeyBuilder> translatorKeyBuilders          ,
+		final BinaryValueTranslatorLookupProvider                         translatorLookupProvider       ,
+		final PersistenceTypeDescriptionResolverProvider                  typeDescriptionResolverProvider,
+		final boolean                                                     switchByteOrder
+	)
+	{
 		return new BinaryValueTranslatorProvider.Default(
 			mayNull(customTranslatorLookup),
 			unwrapKeyBuilders(translatorKeyBuilders),
 			notNull(translatorLookupProvider),
+			mayNull(typeDescriptionResolverProvider),
 			switchByteOrder
 		);
 	}
@@ -125,31 +158,34 @@ public interface BinaryValueTranslatorProvider
 		// instance fields //
 		////////////////////
 		
-		private final XGettingMap<String, BinaryValueSetter> customTranslatorLookup  ;
-		private final BinaryValueTranslatorKeyBuilder[]      translatorKeyBuilders   ;
-		private final BinaryValueTranslatorLookupProvider    translatorLookupProvider;
-		private final boolean                                switchByteOrder         ;
-		
+		private final XGettingMap<String, BinaryValueSetter>     customTranslatorLookup         ;
+		private final BinaryValueTranslatorKeyBuilder[]          translatorKeyBuilders          ;
+		private final BinaryValueTranslatorLookupProvider        translatorLookupProvider       ;
+		private final PersistenceTypeDescriptionResolverProvider typeDescriptionResolverProvider;
+		private final boolean                                    switchByteOrder                ;
+
 		private transient TypeMappingLookup<BinaryValueSetter> translatorLookup;
-		
-		
-		
+
+
+
 		///////////////////////////////////////////////////////////////////////////
 		// constructors //
 		/////////////////
-		
+
 		Default(
-			final XGettingMap<String, BinaryValueSetter> customTranslatorLookup  ,
-			final BinaryValueTranslatorKeyBuilder[]      translatorKeyBuilders   ,
-			final BinaryValueTranslatorLookupProvider    translatorLookupProvider,
-			final boolean                                switchByteOrder
+			final XGettingMap<String, BinaryValueSetter>     customTranslatorLookup         ,
+			final BinaryValueTranslatorKeyBuilder[]          translatorKeyBuilders          ,
+			final BinaryValueTranslatorLookupProvider        translatorLookupProvider       ,
+			final PersistenceTypeDescriptionResolverProvider typeDescriptionResolverProvider,
+			final boolean                                    switchByteOrder
 		)
 		{
 			super();
-			this.customTranslatorLookup   = customTranslatorLookup  ;
-			this.translatorKeyBuilders    = translatorKeyBuilders   ;
-			this.translatorLookupProvider = translatorLookupProvider;
-			this.switchByteOrder          = switchByteOrder         ;
+			this.customTranslatorLookup          = customTranslatorLookup         ;
+			this.translatorKeyBuilders           = translatorKeyBuilders          ;
+			this.translatorLookupProvider        = translatorLookupProvider       ;
+			this.typeDescriptionResolverProvider = typeDescriptionResolverProvider;
+			this.switchByteOrder                 = switchByteOrder                ;
 		}
 		
 		
@@ -288,6 +324,14 @@ public interface BinaryValueTranslatorProvider
 			return BinaryValueFunctions.getObjectValueSetter(Object.class, this.switchByteOrder);
 		}
 
+		private PersistenceTypeDescriptionResolver provideRefactoringResolver()
+		{
+			return this.typeDescriptionResolverProvider == null
+				? null
+				: this.typeDescriptionResolverProvider.provideTypeDescriptionResolver()
+			;
+		}
+
 		/**
 		 * An inlined slot carries the field's content rather than an object id, so reading it means
 		 * constructing the instance from that content. That is only possible while the described layout still
@@ -318,8 +362,9 @@ public interface BinaryValueTranslatorProvider
 			}
 
 			/* The layout differs, but both describe the same field of the same owner, paired by the legacy
-			 * mapping, so their members can be matched by name: one the type has gained takes its default,
-			 * one it has lost is stepped over. A member whose type changed is refused there.
+			 * mapping, so their members can be matched by name, or by the refactoring rule naming one where
+			 * the name changed: one the type has gained takes its default, one it has lost is stepped over.
+			 * A member whose type changed is refused there, as is an unmapped loss plus gain.
 			 */
 			if(sourceMember instanceof PersistenceTypeDefinitionMemberFieldValueStruct
 			&& targetMember instanceof PersistenceTypeDefinitionMemberFieldValueStruct
@@ -328,6 +373,7 @@ public interface BinaryValueTranslatorProvider
 				return BinaryValueStructFunctions.provideEvolvingSetter(
 					(PersistenceTypeDefinitionMemberFieldValueStruct)sourceMember,
 					(PersistenceTypeDefinitionMemberFieldValueStruct)targetMember,
+					this.provideRefactoringResolver()                            ,
 					this.switchByteOrder
 				);
 			}

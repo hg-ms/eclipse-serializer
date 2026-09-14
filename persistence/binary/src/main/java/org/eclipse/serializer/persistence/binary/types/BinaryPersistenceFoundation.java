@@ -396,6 +396,7 @@ extends PersistenceFoundation<Binary, F>
 				this.getCustomTranslatorLookup(),
 				this.getTranslatorKeyBuilders(),
 				this.getValueTranslatorMappingProvider(),
+				this.getTypeDescriptionResolverProvider(),
 				this.isByteOrderMismatch()
 			);
 		}
