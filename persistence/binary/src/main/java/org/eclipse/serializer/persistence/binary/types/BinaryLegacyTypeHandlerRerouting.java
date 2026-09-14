@@ -21,6 +21,7 @@ import java.nio.ByteBuffer;
 
 import org.eclipse.serializer.collections.types.XGettingEnum;
 import org.eclipse.serializer.memory.XMemory;
+import org.eclipse.serializer.persistence.binary.exceptions.BinaryPersistenceException;
 import org.eclipse.serializer.persistence.types.PersistenceLegacyTypeHandlingListener;
 import org.eclipse.serializer.persistence.types.PersistenceLoadHandler;
 import org.eclipse.serializer.persistence.types.PersistenceReferenceLoader;
@@ -72,12 +73,44 @@ extends AbstractBinaryLegacyTypeHandlerTranslating<T>
 		final boolean                                         switchByteOrder
 	)
 	{
+		return New(
+			typeDefinition              ,
+			typeHandler                 ,
+			translatorsWithTargetOffsets,
+			listener                    ,
+			""                          ,
+			switchByteOrder
+		);
+	}
+
+	/**
+	 * Like {@link #New(PersistenceTypeDefinition, PersistenceTypeHandler, XGettingEnum, PersistenceLegacyTypeHandlingListener, boolean)},
+	 * additionally naming the current members the persisted layout does not carry.
+	 * <p>
+	 * A handler that builds its instances from the persisted values instead of populating them - a value
+	 * class handler - can legitimately reject what a defaulted member holds, and then that member is what
+	 * the failure is about. It is named where it is known, which is here and not in the handler itself.
+	 *
+	 * @param defaultedMembers the current members that take their type's default, comma-separated; empty if none.
+	 *
+	 * @return the newly created legacy handler.
+	 */
+	public static <T> BinaryLegacyTypeHandlerRerouting<T> New(
+		final PersistenceTypeDefinition                       typeDefinition              ,
+		final PersistenceTypeHandler<Binary, T>               typeHandler                 ,
+		final XGettingEnum<KeyValue<Long, BinaryValueSetter>> translatorsWithTargetOffsets,
+		final PersistenceLegacyTypeHandlingListener<Binary>   listener                    ,
+		final String                                          defaultedMembers            ,
+		final boolean                                         switchByteOrder
+	)
+	{
 		return new BinaryLegacyTypeHandlerRerouting<>(
 			notNull(typeDefinition)                      ,
 			notNull(typeHandler)                         ,
 			toTranslators(translatorsWithTargetOffsets)  ,
 			toTargetOffsets(translatorsWithTargetOffsets),
 			mayNull(listener)                            ,
+			notNull(defaultedMembers)                    ,
 			switchByteOrder
 		);
 	}
@@ -88,6 +121,7 @@ extends AbstractBinaryLegacyTypeHandlerTranslating<T>
 	////////////////////
 
 	private final BinaryReferenceTraverser[] newBinaryLayoutReferenceTraversers;
+	private final String                     defaultedMembers                  ;
 
 
 
@@ -101,10 +135,13 @@ extends AbstractBinaryLegacyTypeHandlerTranslating<T>
 		final BinaryValueSetter[]                           valueTranslators,
 		final long[]                                        targetOffsets   ,
 		final PersistenceLegacyTypeHandlingListener<Binary> listener        ,
+		final String                                        defaultedMembers,
 		final boolean                                       switchByteOrder
 	)
 	{
 		super(typeDefinition, typeHandler, valueTranslators, targetOffsets, listener, switchByteOrder);
+
+		this.defaultedMembers = defaultedMembers;
 
 		/* (01.01.2020 TM)NOTE: Bugfix:
 		 * Moved from AbstractBinaryLegacyTypeHandlerTranslating here as this is only correct for ~Rerouting
@@ -163,7 +200,31 @@ extends AbstractBinaryLegacyTypeHandlerTranslating<T>
 	protected T internalCreate(final Binary rawData, final PersistenceLoadHandler handler)
 	{
 		// the data has been rearranged by #prepareLoadItem, so the current type handler can read it directly.
-		return this.typeHandler().create(rawData, handler);
+		if(this.defaultedMembers.isEmpty())
+		{
+			return this.typeHandler().create(rawData, handler);
+		}
+
+		try
+		{
+			return this.typeHandler().create(rawData, handler);
+		}
+		catch(final Error e)
+		{
+			throw e;
+		}
+		catch(final RuntimeException e)
+		{
+			/* Naming them is the point: a handler constructing its instance from the persisted values can
+			 * reject what a defaulted member holds, and the persisted layout not carrying it is the reason.
+			 */
+			throw new BinaryPersistenceException(
+				"Reading " + this.legacyTypeDefinition().toTypeIdentifier() + " as "
+				+ this.typeHandler().toRuntimeTypeIdentifier() + " failed, whose persisted layout did not"
+				+ " carry " + this.defaultedMembers + " so it was read with the default.",
+				e
+			);
+		}
 	}
 
 	@Override

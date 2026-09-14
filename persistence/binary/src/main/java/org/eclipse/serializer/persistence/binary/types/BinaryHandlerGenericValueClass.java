@@ -452,6 +452,22 @@ public final class BinaryHandlerGenericValueClass<T> extends AbstractBinaryHandl
 		}
 	}
 
+	/**
+	 * None, since {@link #updateState} has nothing to do: a value instance is constructed from the
+	 * persisted data rather than populated afterwards, so no setter is ever invoked.
+	 * <p>
+	 * Deriving them is not merely waste. A member whose type is itself a value class is set through a
+	 * handle on the field rather than at its memory offset, because a value may be laid out inside its
+	 * owner - and resolving that handle on a field <i>declared in</i> a value class is refused by the
+	 * JVM outright, since such a field can never be written. The handler could then not even be
+	 * created, so a value class holding another value class would be unpersistable.
+	 */
+	@Override
+	protected BinaryValueSetter[] deriveSetters()
+	{
+		return new BinaryValueSetter[0];
+	}
+
 	@Override
 	public void initializeState(final Binary data, final T instance, final PersistenceLoadHandler handler)
 	{

@@ -19,6 +19,7 @@ import static org.eclipse.serializer.util.X.notNull;
 
 import java.lang.reflect.Field;
 
+import org.eclipse.serializer.chars.VarString;
 import org.eclipse.serializer.util.X;
 import org.eclipse.serializer.collections.BulkList;
 import org.eclipse.serializer.collections.HashEnum;
@@ -114,6 +115,20 @@ public interface BinaryLegacyTypeHandlerCreator extends PersistenceLegacyTypeHan
 		///////////////////////////////////////////////////////////////////////////
 		// methods //
 		////////////
+
+		/** The members' simple names, so a failed construction can say which ones were defaulted. */
+		private static String memberNames(
+			final XGettingEnum<? extends PersistenceTypeDefinitionMember> members
+		)
+		{
+			final VarString vs = VarString.New();
+			for(final PersistenceTypeDefinitionMember member : members)
+			{
+				vs.add(vs.isEmpty() ? "" : ", ").add(member.name());
+			}
+
+			return vs.toString();
+		}
 
 		private static HashTable<PersistenceTypeDefinitionMember, Long> createBinaryOffsetMap(
 			final XGettingEnum<? extends PersistenceTypeDefinitionMember> members
@@ -212,10 +227,11 @@ public interface BinaryLegacyTypeHandlerCreator extends PersistenceLegacyTypeHan
 			);
 
 			final BinaryLegacyTypeHandlerRerouting<T> reroutingTypeHandler = BinaryLegacyTypeHandlerRerouting.New(
-				mappingResult.legacyTypeDefinition(),
-				currentTypeHandler                  ,
-				translatorsWithTargetOffsets        ,
-				this.legacyTypeHandlingListener     ,
+				mappingResult.legacyTypeDefinition()         ,
+				currentTypeHandler                           ,
+				translatorsWithTargetOffsets                 ,
+				this.legacyTypeHandlingListener              ,
+				memberNames(mappingResult.newCurrentMembers()),
 				this.switchByteOrder
 			);
 
