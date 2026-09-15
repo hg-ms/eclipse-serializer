@@ -27,6 +27,7 @@ import org.eclipse.serializer.persistence.types.PersistenceLoadHandler;
 import org.eclipse.serializer.persistence.types.PersistenceReferenceLoader;
 import org.eclipse.serializer.persistence.types.PersistenceTypeDefinition;
 import org.eclipse.serializer.persistence.types.PersistenceTypeHandler;
+import org.eclipse.serializer.reflect.XReflect;
 import org.eclipse.serializer.typing.KeyValue;
 
 /**
@@ -200,18 +201,19 @@ extends AbstractBinaryLegacyTypeHandlerTranslating<T>
 	protected T internalCreate(final Binary rawData, final PersistenceLoadHandler handler)
 	{
 		// the data has been rearranged by #prepareLoadItem, so the current type handler can read it directly.
-		if(this.defaultedMembers.isEmpty())
+		if(this.defaultedMembers.isEmpty() || !XReflect.isValueClass(this.typeHandler().type()))
 		{
+			/* Every custom-wrapped handler reaches this class, enums included, and only one of them builds
+			 * its instance from the persisted values. For all the others a failure of #create says nothing
+			 * about a defaulted member, so naming one would assert a cause rather than report it - and the
+			 * wrapping would hide the exception type a caller matches on.
+			 */
 			return this.typeHandler().create(rawData, handler);
 		}
 
 		try
 		{
 			return this.typeHandler().create(rawData, handler);
-		}
-		catch(final Error e)
-		{
-			throw e;
 		}
 		catch(final RuntimeException e)
 		{
