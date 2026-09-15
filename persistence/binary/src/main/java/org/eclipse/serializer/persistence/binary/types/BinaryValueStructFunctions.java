@@ -675,7 +675,15 @@ public final class BinaryValueStructFunctions
 		return defaults;
 	}
 
-	private static Object defaultValue(final Class<?> type)
+	/**
+	 * The value a member takes where the persisted layout does not carry one: the type's own default.
+	 * Shared with {@link BinaryLegacyTypeHandlerValueClass}, which starts its argument array from these.
+	 *
+	 * @param type the member's type.
+	 *
+	 * @return the boxed default, or {@code null} for a non-primitive.
+	 */
+	static Object defaultValue(final Class<?> type)
 	{
 		if(type == byte.class)
 		{

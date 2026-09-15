@@ -283,6 +283,11 @@ public final class BinaryHandlerGenericValueClass<T> extends AbstractBinaryHandl
 
 	private final MethodHandle       constructor    ;
 
+	/* Kept so a legacy handler can build its own readers over the persisted layout and still place the
+	 * values where this type's constructor expects them. See BinaryLegacyTypeHandlerValueClass.
+	 */
+	private final XGettingEnum<Field> persistableFields;
+
 	// all three arrays are parallel and indexed in persisted (= storing) member order.
 	private final BinaryValueReader[] readers       ;
 	private final long[]              readerOffsets ;
@@ -349,7 +354,92 @@ public final class BinaryHandlerGenericValueClass<T> extends AbstractBinaryHandl
 
 		validateNoCustomFieldHandlers(type, persistableFields, fieldHandlerProvider, switchByteOrder);
 
-		this.constructor = resolveConstructor(type, toParameterTypes(persistableFields), persistableFields);
+		this.persistableFields = persistableFields;
+		this.constructor       = resolveConstructor(type, toParameterTypes(persistableFields), persistableFields);
+	}
+
+	/**
+	 * The number of arguments the constructor accepts, which is the length every argument array must have.
+	 */
+	final int argumentCount()
+	{
+		return this.persistableFields.intSize();
+	}
+
+	/**
+	 * The constructor argument the passed field is, so a handler reading another layout can place a value
+	 * where this type expects it.
+	 *
+	 * @return the argument index, or {@literal -1} if the field is none of the persistable ones.
+	 */
+	final int argumentIndex(final Field field)
+	{
+		int i = 0;
+		for(final Field persistableField : this.persistableFields)
+		{
+			if(persistableField.equals(field))
+			{
+				return i;
+			}
+			i++;
+		}
+
+		return -1;
+	}
+
+	/**
+	 * Constructs an instance from a complete argument array, which is the only way an identity-less
+	 * instance comes into existence. Shared with the legacy handler, which fills the array from the
+	 * persisted layout instead of the current one.
+	 *
+	 * @param arguments the constructor arguments, in declaration order.
+	 * @param objectId  the entity's object id, for the failure message.
+	 *
+	 * @return the newly created instance.
+	 */
+	final T createInstance(final Object[] arguments, final long objectId)
+	{
+		return this.createInstance(arguments, objectId, "");
+	}
+
+	/**
+	 * @param defaultedMembers the current members the persisted layout did not carry, comma-separated;
+	 *                         empty where all of them were carried. Naming them is the actionable half of
+	 *                         a rejection: the constructor's own reason says what it refused, not that a
+	 *                         defaulted value is why it was there to refuse.
+	 */
+	final T createInstance(final Object[] arguments, final long objectId, final String defaultedMembers)
+	{
+		try
+		{
+			// cast safety guaranteed by the constructor being the handled type's own.
+			@SuppressWarnings("unchecked")
+			final T instance = (T)this.constructor.invokeExact(arguments);
+
+			return instance;
+		}
+		catch(final Throwable t)
+		{
+			// a failure of the JVM itself is none of this handler's business.
+			if(t instanceof Error)
+			{
+				throw (Error)t;
+			}
+
+			/* A value class constructor validating its arguments can legitimately reject persisted
+			 * state, e.g. when a field was added and the missing value is defaulted by a mapping.
+			 */
+			throw new BinaryPersistenceException(
+				"Failed to construct instance of value class " + this.type().getName()
+				+ " for objectId " + objectId
+				+ (defaultedMembers.isEmpty()
+					? ""
+					: ", whose persisted layout did not carry " + defaultedMembers
+					+ " so it was constructed with the default")
+				+ ".",
+				t
+			);
+		}
 	}
 
 	/**
@@ -433,31 +523,7 @@ public final class BinaryHandlerGenericValueClass<T> extends AbstractBinaryHandl
 			arguments[this.argumentIndices[i]] = this.readers[i].readValue(data, this.readerOffsets[i], handler);
 		}
 
-		try
-		{
-			// cast safety guaranteed by the constructor being the handled type's own.
-			@SuppressWarnings("unchecked")
-			final T instance = (T)this.constructor.invokeExact(arguments);
-
-			return instance;
-		}
-		catch(final Throwable t)
-		{
-			// a failure of the JVM itself is none of this handler's business.
-			if(t instanceof Error)
-			{
-				throw (Error)t;
-			}
-
-			/* A value class constructor validating its arguments can legitimately reject persisted
-			 * state, e.g. when a field was added and the missing value is defaulted by a mapping.
-			 */
-			throw new BinaryPersistenceException(
-				"Failed to construct instance of value class " + this.type().getName()
-				+ " for objectId " + data.getBuildItemObjectId() + ".",
-				t
-			);
-		}
+		return this.createInstance(arguments, data.getBuildItemObjectId());
 	}
 
 	/**

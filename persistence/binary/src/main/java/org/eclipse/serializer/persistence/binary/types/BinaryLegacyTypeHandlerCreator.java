@@ -214,6 +214,27 @@ public interface BinaryLegacyTypeHandlerCreator extends PersistenceLegacyTypeHan
 				);
 			}
 
+			if(currentTypeHandler instanceof BinaryHandlerGenericValueClass)
+			{
+				/* A value class is constructed from its members rather than populated, so it can read the
+				 * persisted layout directly instead of having the bytes rewritten into the current one
+				 * first - which is also the only way a member that was referenced and is now inlined can be
+				 * read at all, since resolving it needs the load handler a rewrite does not have.
+				 */
+				@SuppressWarnings("unchecked")
+				final BinaryHandlerGenericValueClass<T> valueClassHandler =
+					(BinaryHandlerGenericValueClass<T>)currentTypeHandler
+				;
+
+				return BinaryLegacyTypeHandlerValueClass.New(
+					mappingResult.legacyTypeDefinition() ,
+					valueClassHandler                    ,
+					mappingResult.legacyToCurrentMembers(),
+					this.legacyTypeHandlingListener      ,
+					this.switchByteOrder
+				);
+			}
+
 			final HashTable<PersistenceTypeDefinitionMember, Long> targetMemberOffsets = createBinaryOffsetMap(
 				mappingResult.currentTypeHandler().instanceMembers()
 			);

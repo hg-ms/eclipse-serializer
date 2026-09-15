@@ -562,11 +562,11 @@ public interface BinaryValueTranslatorProvider
 			final PersistenceTypeDefinitionMember   targetMember
 		)
 		{
-			if(sourceMember.isReference())
-			{
-				return BinaryValueTranslators.provideReferenceValueBinaryTranslator(sourceMember, targetMember);
-			}
-
+			/* Before the reference test, not after it: an inlined slot on either side is what this path
+			 * cannot rewrite, and a reference source reaching the generic translator below would be
+			 * reported as a primitive-versus-reference mismatch, which names neither the slot nor the
+			 * reason.
+			 */
 			if(sourceMember instanceof PersistenceTypeDescriptionMemberFieldValueStruct)
 			{
 				if(targetMember == null)
@@ -596,11 +596,23 @@ public interface BinaryValueTranslatorProvider
 
 			if(targetMember instanceof PersistenceTypeDescriptionMemberFieldValueStruct)
 			{
+				/* Writing a slot means having the value it describes, and this path runs before any
+				 * reference is resolved - it has no load handler and the referent does not exist yet.
+				 * A type whose instances are constructed reads its members instead of being rewritten
+				 * into, which is what BinaryLegacyTypeHandlerValueClass does; anything else has to be
+				 * refused here rather than guessed.
+				 */
 				throw new BinaryPersistenceException(
 					"Field " + toTypedIdentifier(sourceMember) + " cannot be rewritten into the inlined slot "
 					+ toTypedIdentifier(targetMember) + ": an inlined slot carries the content of a whole"
-					+ " type, which a single persisted value does not."
+					+ " type, which a single persisted value does not, and the value it would need cannot"
+					+ " be resolved before the referenced entities are loaded."
 				);
+			}
+
+			if(sourceMember.isReference())
+			{
+				return BinaryValueTranslators.provideReferenceValueBinaryTranslator(sourceMember, targetMember);
 			}
 
 			validateIsPrimitiveType(sourceMember);
