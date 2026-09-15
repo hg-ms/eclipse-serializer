@@ -227,10 +227,11 @@ public interface BinaryLegacyTypeHandlerCreator extends PersistenceLegacyTypeHan
 				;
 
 				return BinaryLegacyTypeHandlerValueClass.New(
-					mappingResult.legacyTypeDefinition() ,
-					valueClassHandler                    ,
-					mappingResult.legacyToCurrentMembers(),
-					this.legacyTypeHandlingListener      ,
+					mappingResult.legacyTypeDefinition()                  ,
+					valueClassHandler                                     ,
+					mappingResult.legacyToCurrentMembers()                ,
+					this.valueTranslatorProvider.provideRefactoringResolver(),
+					this.legacyTypeHandlingListener                       ,
 					this.switchByteOrder
 				);
 			}

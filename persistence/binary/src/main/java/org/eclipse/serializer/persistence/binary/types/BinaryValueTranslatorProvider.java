@@ -78,9 +78,21 @@ public interface BinaryValueTranslatorProvider
 		PersistenceTypeHandler<Binary, ?> targetCurrentType,
 		PersistenceTypeDefinitionMember   targetMember
 	);
-	
-	
-	
+
+	/**
+	 * The resolver the refactoring rules come from, for a handler that reads a persisted layout itself
+	 * instead of having a translator do it - a value class, whose instances are constructed rather than
+	 * populated.
+	 *
+	 * @return the refactoring resolver, or {@code null} where none is configured.
+	 */
+	public default PersistenceTypeDescriptionResolver provideRefactoringResolver()
+	{
+		return null;
+	}
+
+
+
 	/**
 	 * Creates a new default {@link BinaryValueTranslatorProvider}.
 	 *
@@ -324,7 +336,8 @@ public interface BinaryValueTranslatorProvider
 			return BinaryValueFunctions.getObjectValueSetter(Object.class, this.switchByteOrder);
 		}
 
-		private PersistenceTypeDescriptionResolver provideRefactoringResolver()
+		@Override
+		public PersistenceTypeDescriptionResolver provideRefactoringResolver()
 		{
 			return this.typeDescriptionResolverProvider == null
 				? null

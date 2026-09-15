@@ -22,6 +22,7 @@ import java.lang.invoke.MethodHandle;
 import java.lang.reflect.Field;
 
 import org.eclipse.serializer.chars.VarString;
+import org.eclipse.serializer.collections.BulkList;
 import org.eclipse.serializer.collections.HashEnum;
 import org.eclipse.serializer.collections.types.XGettingEnum;
 import org.eclipse.serializer.collections.types.XGettingSequence;
@@ -337,99 +338,38 @@ public final class BinaryValueStructFunctions
 		 */
 		final HashEnum<Field> declarationOrder = declarationOrder(targetMember, valueType);
 
-		final int              count   = sourceMember.members().intSize();
-		final StructReader[]   readers = new StructReader[count];
-		final int[]            targets = new int[count];
-		final HashEnum<String> carried = HashEnum.New();
+		final BulkList<MemberMatch> matches = matchEvolvingMembers(
+			sourceMember, targetMember, refactoringResolver, declarationOrder
+		);
 
-		// persisted members whose value is discarded without a rule saying so, which is worth reporting
-		final HashEnum<PersistenceTypeDefinitionMemberField> dropped = HashEnum.New();
+		final int            count   = matches.intSize();
+		final StructReader[] readers = new StructReader[count];
+		final int[]          targets = new int[count];
 
 		int i = 0;
-		for(final PersistenceTypeDefinitionMemberField source : sourceMember.members())
+		for(final MemberMatch match : matches)
 		{
-			// null means a mapping rule states the member was removed deliberately
-			final String targetName = resolveTargetName(refactoringResolver, targetMember, source);
-			final Field  field      = targetName == null
-				? null
-				: findField(declarationOrder, targetName)
-			;
-			if(field == null)
+			if(match.isDropped())
 			{
 				// the type no longer has this member: step over what was written for it
-				final long skipped = source.persistentMinimumLength();
+				final long skipped = match.source.persistentMinimumLength();
 				readers[i] = (address, args, index) -> skipped;
 				targets[i] = 0;
-				if(targetName != null)
-				{
-					dropped.add(source);
-				}
 			}
 			else
 			{
-				final PersistenceTypeDefinitionMemberField target = findMember(targetMember, targetName);
-
-				final boolean sourceIsStruct = source instanceof PersistenceTypeDefinitionMemberFieldValueStruct;
-				final boolean targetIsStruct = target instanceof PersistenceTypeDefinitionMemberFieldValueStruct;
-				if(sourceIsStruct != targetIsStruct)
-				{
-					/* The same member, inlined on one side and referenced on the other. The persisted bytes
-					 * are a whole layout where the current form expects one value, or the other way round,
-					 * and neither can be read as the other.
-					 */
-					throw new BinaryPersistenceException(
-						"Inlined layout member " + source.identifier() + " was persisted "
-						+ (sourceIsStruct ? "as an inlined layout and is now a single value"
-						                  : "as a single value and is now an inlined layout")
-						+ ". Changing whether a member of an inlined layout is itself inlined is not"
-						+ " supported."
-					);
-				}
-
-				if(!isSameType(refactoringResolver, source.typeName(), field.getType()))
-				{
-					throw new BinaryPersistenceException(
-						"Inlined layout member " + source.identifier() + " was persisted as "
-						+ source.typeName() + " and is now " + field.getType().getName()
-						+ ". Converting the type of an inlined member is not supported."
-					);
-				}
-				readers[i] = sourceIsStruct
+				readers[i] = match.isNested()
 					? provideEvolvingNestedReader(
-						(PersistenceTypeDefinitionMemberFieldValueStruct)source,
-						(PersistenceTypeDefinitionMemberFieldValueStruct)target,
-						refactoringResolver                                   ,
-						switchByteOrder
+						match.sourceStruct(), match.targetStruct(), refactoringResolver, switchByteOrder
 					)
-					: provideReader(field.getType(), switchByteOrder)
+					: provideReader(match.field.getType(), switchByteOrder)
 				;
-				targets[i] = indexOf(declarationOrder, field);
-				if(!carried.add(field.getName()))
-				{
-					/* Two persisted members reading into one, which only a mapping rule can produce: the
-					 * construction would take whichever is read last and discard the other.
-					 */
-					throw new BinaryPersistenceException(
-						"Inlined layout of " + targetMember.identifier() + " reads more than one persisted"
-						+ " member into " + field.getName() + ", the last of them " + source.identifier()
-						+ ". Every persisted member needs a target of its own, or none."
-					);
-				}
+				targets[i] = indexOf(declarationOrder, match.field);
 			}
 			i++;
 		}
 
-		final HashEnum<Field> defaulted = HashEnum.New();
-		for(final Field field : declarationOrder)
-		{
-			if(!carried.contains(field.getName()))
-			{
-				defaulted.add(field);
-			}
-		}
-
-		validateUnambiguousEvolution(targetMember, dropped, defaulted);
-		reportEvolution(targetMember, carried, dropped, defaulted);
+		final HashEnum<Field> defaulted = defaultedFields(declarationOrder, matches);
 
 		final MethodHandle constructor = BinaryHandlerGenericValueClass.resolveConstructor(
 			valueType,
@@ -446,6 +386,165 @@ public final class BinaryValueStructFunctions
 			fieldNames(defaulted)             ,
 			sourceMember.persistentMinimumLength()
 		);
+	}
+
+	/**
+	 * Pairs every persisted member of an inlined layout with the current member it is read into, which is
+	 * the half of evolving a layout that does not depend on where it is read from. Both readers build on
+	 * it: the one reading a slot inside an owner's entity and the one reading it inside a value class's.
+	 * <p>
+	 * Everything that can refuse the evolution happens here - a member changing between inlined and plain,
+	 * a changed type, two rules pointing at one member, and the ambiguous loss-plus-gain - as does the
+	 * report of what was carried, defaulted and dropped.
+	 *
+	 * @return one match per persisted member, in persisted order.
+	 */
+	private static BulkList<MemberMatch> matchEvolvingMembers(
+		final PersistenceTypeDefinitionMemberFieldValueStruct sourceMember       ,
+		final PersistenceTypeDefinitionMemberFieldValueStruct targetMember       ,
+		final PersistenceTypeDescriptionResolver              refactoringResolver,
+		final HashEnum<Field>                                 declarationOrder
+	)
+	{
+		final BulkList<MemberMatch> matches = BulkList.New();
+		final HashEnum<String>      carried = HashEnum.New();
+
+		// persisted members whose value is discarded without a rule saying so, which is worth reporting
+		final HashEnum<PersistenceTypeDefinitionMemberField> dropped = HashEnum.New();
+
+		for(final PersistenceTypeDefinitionMemberField source : sourceMember.members())
+		{
+			// null means a mapping rule states the member was removed deliberately
+			final String targetName = resolveTargetName(refactoringResolver, targetMember, source);
+			final Field  field      = targetName == null
+				? null
+				: findField(declarationOrder, targetName)
+			;
+			if(field == null)
+			{
+				matches.add(new MemberMatch(source, null, null));
+				if(targetName != null)
+				{
+					dropped.add(source);
+				}
+
+				continue;
+			}
+
+			final PersistenceTypeDefinitionMemberField target = findMember(targetMember, targetName);
+
+			final boolean sourceIsStruct = source instanceof PersistenceTypeDefinitionMemberFieldValueStruct;
+			final boolean targetIsStruct = target instanceof PersistenceTypeDefinitionMemberFieldValueStruct;
+			if(sourceIsStruct != targetIsStruct)
+			{
+				/* The same member, inlined on one side and referenced on the other. The persisted bytes are
+				 * a whole layout where the current form expects one value, or the other way round, and
+				 * neither can be read as the other.
+				 */
+				throw new BinaryPersistenceException(
+					"Inlined layout member " + source.identifier() + " was persisted "
+					+ (sourceIsStruct ? "as an inlined layout and is now a single value"
+					                  : "as a single value and is now an inlined layout")
+					+ ". Changing whether a member of an inlined layout is itself inlined is not supported."
+				);
+			}
+
+			if(!isSameType(refactoringResolver, source.typeName(), field.getType()))
+			{
+				throw new BinaryPersistenceException(
+					"Inlined layout member " + source.identifier() + " was persisted as "
+					+ source.typeName() + " and is now " + field.getType().getName()
+					+ ". Converting the type of an inlined member is not supported."
+				);
+			}
+
+			matches.add(new MemberMatch(source, target, field));
+
+			if(!carried.add(field.getName()))
+			{
+				/* Two persisted members reading into one, which only a mapping rule can produce: the
+				 * construction would take whichever is read last and discard the other.
+				 */
+				throw new BinaryPersistenceException(
+					"Inlined layout of " + targetMember.identifier() + " reads more than one persisted"
+					+ " member into " + field.getName() + ", the last of them " + source.identifier()
+					+ ". Every persisted member needs a target of its own, or none."
+				);
+			}
+		}
+
+		final HashEnum<Field> defaulted = HashEnum.New();
+		for(final Field field : declarationOrder)
+		{
+			if(!carried.contains(field.getName()))
+			{
+				defaulted.add(field);
+			}
+		}
+
+		validateUnambiguousEvolution(targetMember, dropped, defaulted);
+		reportEvolution(targetMember, carried, dropped, defaulted);
+
+		return matches;
+	}
+
+	/** The current members no persisted member is read into, which take their type's default. */
+	private static HashEnum<Field> defaultedFields(
+		final HashEnum<Field>       declarationOrder,
+		final BulkList<MemberMatch> matches
+	)
+	{
+		final HashEnum<Field> defaulted = HashEnum.New();
+
+		for(final Field field : declarationOrder)
+		{
+			if(!matches.containsSearched(match -> field.equals(match.field)))
+			{
+				defaulted.add(field);
+			}
+		}
+
+		return defaulted;
+	}
+
+	/** One persisted member of an inlined layout and the current member it is read into, if any. */
+	private static final class MemberMatch
+	{
+		final PersistenceTypeDefinitionMemberField source;
+		final PersistenceTypeDefinitionMemberField target;
+		final Field                                field ;
+
+		MemberMatch(
+			final PersistenceTypeDefinitionMemberField source,
+			final PersistenceTypeDefinitionMemberField target,
+			final Field                                field
+		)
+		{
+			super();
+			this.source = source;
+			this.target = target;
+			this.field  = field ;
+		}
+
+		boolean isDropped()
+		{
+			return this.field == null;
+		}
+
+		boolean isNested()
+		{
+			return this.target instanceof PersistenceTypeDefinitionMemberFieldValueStruct;
+		}
+
+		PersistenceTypeDefinitionMemberFieldValueStruct sourceStruct()
+		{
+			return (PersistenceTypeDefinitionMemberFieldValueStruct)this.source;
+		}
+
+		PersistenceTypeDefinitionMemberFieldValueStruct targetStruct()
+		{
+			return (PersistenceTypeDefinitionMemberFieldValueStruct)this.target;
+		}
 	}
 
 	/**
@@ -886,6 +985,108 @@ public final class BinaryValueStructFunctions
 	}
 
 	/**
+	 * Creates the reader for an inlined field of a value class whose described layout differs from the
+	 * current one - the counterpart of {@link #provideEvolvingSetter} for a type that is constructed rather
+	 * than populated, and the reason a value class stored as an entity can evolve an inlined member of its
+	 * own.
+	 * <p>
+	 * The members are paired exactly as they are for an owner's field, by
+	 * {@link #matchEvolvingMembers}, so the same renames are carried, the same mapping rules apply and the
+	 * same shapes are refused. Only the reading differs: each carried member is read at its own offset in
+	 * the persisted slot, so a dropped one is simply never read rather than stepped over.
+	 *
+	 * @param sourceMember        the inlined member as the legacy definition describes it.
+	 * @param targetMember        the inlined member as the current type describes it.
+	 * @param refactoringResolver the resolver consulted for member mappings; may be {@code null}.
+	 *
+	 * @return the reader for the evolved inlined member.
+	 */
+	public static BinaryValueReader provideEvolvingValueReader(
+		final PersistenceTypeDefinitionMemberFieldValueStruct sourceMember       ,
+		final PersistenceTypeDefinitionMemberFieldValueStruct targetMember       ,
+		final PersistenceTypeDescriptionResolver              refactoringResolver
+	)
+	{
+		final Class<?> valueType = targetMember.type();
+		if(valueType == null)
+		{
+			throw new BinaryPersistenceException(
+				"Inlined field " + targetMember.identifier() + " has no runtime type."
+			);
+		}
+
+		final HashEnum<Field>       declarationOrder = declarationOrder(targetMember, valueType);
+		final BulkList<MemberMatch> matches          = matchEvolvingMembers(
+			sourceMember, targetMember, refactoringResolver, declarationOrder
+		);
+
+		final BulkList<BinaryValueReader> readers = BulkList.New();
+		final BulkList<Long>              offsets = BulkList.New();
+		final BulkList<Integer>           targets = BulkList.New();
+
+		// the marker precedes the content, so the first member sits behind it
+		long offset = NULL_MARKER_LENGTH;
+		for(final MemberMatch match : matches)
+		{
+			if(!match.isDropped())
+			{
+				readers.add(match.isNested()
+					? provideEvolvingValueReader(match.sourceStruct(), match.targetStruct(), refactoringResolver)
+					: BinaryValueReader.provideReader(match.field.getType())
+				);
+				offsets.add(offset);
+				targets.add(indexOf(declarationOrder, match.field));
+			}
+
+			offset += match.source.persistentMinimumLength();
+		}
+
+		final HashEnum<Field> defaulted = defaultedFields(declarationOrder, matches);
+
+		final MethodHandle constructor = BinaryHandlerGenericValueClass.resolveConstructor(
+			valueType,
+			BinaryHandlerGenericValueClass.toParameterTypes(declarationOrder),
+			declarationOrder
+		);
+
+		return new EvolvingStructValueReader(
+			valueType                                                      ,
+			readers.toArray(BinaryValueReader.class)                       ,
+			toLongArray(offsets)                                           ,
+			toIntArray(targets)                                            ,
+			constructor                                                    ,
+			defaultArguments(declarationOrder)                             ,
+			fieldNames(defaulted)
+		);
+	}
+
+	private static long[] toLongArray(final BulkList<Long> values)
+	{
+		final long[] array = new long[values.intSize()];
+
+		int i = 0;
+		for(final Long value : values)
+		{
+			array[i++] = value.longValue();
+		}
+
+		return array;
+	}
+
+	private static int[] toIntArray(final BulkList<Integer> values)
+	{
+		final int[] array = new int[values.intSize()];
+
+		int i = 0;
+		for(final Integer value : values)
+		{
+			array[i++] = value.intValue();
+		}
+
+		return array;
+	}
+
+	/**
 	 * The reader for one member of an inlined layout: a nested inlined member is read as a slot of its own
 	 * and constructed, anything else is read as the primitive it is.
 	 */
@@ -1176,6 +1377,78 @@ public final class BinaryValueStructFunctions
 	 * starts from the current type's defaults, so a member the persisted layout does not carry keeps its
 	 * default, and a reader for a member the type no longer has advances past it without writing.
 	 */
+	/**
+	 * Reads an inlined slot whose described layout differs from the current one out of a value class's own
+	 * entity data. The argument array starts from the current type's defaults, so a member the persisted
+	 * layout does not carry keeps its default, and one the type no longer has is simply never read.
+	 */
+	private static final class EvolvingStructValueReader implements BinaryValueReader
+	{
+		private final Class<?>            valueType     ;
+		private final BinaryValueReader[] readers       ;
+		private final long[]              offsets       ;
+		private final int[]               targets       ;
+		private final MethodHandle        constructor   ;
+		private final Object[]            defaults      ;
+		private final String              defaultedNames;
+
+		EvolvingStructValueReader(
+			final Class<?>            valueType     ,
+			final BinaryValueReader[] readers       ,
+			final long[]              offsets       ,
+			final int[]               targets       ,
+			final MethodHandle        constructor   ,
+			final Object[]            defaults      ,
+			final String              defaultedNames
+		)
+		{
+			super();
+			this.valueType      = valueType     ;
+			this.readers        = readers       ;
+			this.offsets        = offsets       ;
+			this.targets        = targets       ;
+			this.constructor    = constructor   ;
+			this.defaults       = defaults      ;
+			this.defaultedNames = defaultedNames;
+		}
+
+		@Override
+		public Object readValue(final Binary data, final long offset, final PersistenceLoadHandler handler)
+		{
+			if(data.read_byte(offset) == NULL_MARKER_ABSENT)
+			{
+				return null;
+			}
+
+			final Object[] args = this.defaults.clone();
+			for(int i = 0; i < this.readers.length; i++)
+			{
+				args[this.targets[i]] = this.readers[i].readValue(data, offset + this.offsets[i], handler);
+			}
+
+			try
+			{
+				return (Object)this.constructor.invokeExact(args);
+			}
+			catch(final Error e)
+			{
+				throw e;
+			}
+			catch(final Throwable t)
+			{
+				throw new BinaryPersistenceException(
+					"Could not construct inlined instance of " + this.valueType.getName()
+					+ (this.defaultedNames.isEmpty()
+						? ""
+						: ", whose persisted layout did not carry " + this.defaultedNames
+						+ " so it was constructed with the default")
+					, t
+				);
+			}
+		}
+
+	}
+
 	private static final class EvolvingNestedStructReader implements StructReader
 	{
 		private final Class<?>       valueType     ;

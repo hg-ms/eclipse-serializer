@@ -27,6 +27,7 @@ import org.eclipse.serializer.persistence.types.PersistenceLegacyTypeHandlingLis
 import org.eclipse.serializer.persistence.types.PersistenceLoadHandler;
 import org.eclipse.serializer.persistence.types.PersistenceReferenceLoader;
 import org.eclipse.serializer.persistence.types.PersistenceTypeDefinition;
+import org.eclipse.serializer.persistence.types.PersistenceTypeDescriptionResolver;
 import org.eclipse.serializer.persistence.types.PersistenceTypeDefinitionMember;
 import org.eclipse.serializer.persistence.types.PersistenceTypeDefinitionMemberFieldReflective;
 import org.eclipse.serializer.persistence.types.PersistenceTypeDefinitionMemberFieldValueStruct;
@@ -88,15 +89,17 @@ extends AbstractBinaryLegacyTypeHandlerTranslating<T>
 		final BinaryHandlerGenericValueClass<T>         typeHandler    ,
 		final XGettingTable<PersistenceTypeDefinitionMember, Similarity<PersistenceTypeDefinitionMember>>
 		                                                legacyToCurrent,
+		final PersistenceTypeDescriptionResolver        refactoringResolver,
 		final PersistenceLegacyTypeHandlingListener<Binary> listener   ,
 		final boolean                                   switchByteOrder
 	)
 	{
 		return new BinaryLegacyTypeHandlerValueClass<>(
-			notNull(typeDefinition),
-			notNull(typeHandler)   ,
-			notNull(legacyToCurrent),
-			mayNull(listener)      ,
+			notNull(typeDefinition)   ,
+			notNull(typeHandler)      ,
+			notNull(legacyToCurrent)  ,
+			mayNull(refactoringResolver),
+			mayNull(listener)         ,
 			switchByteOrder
 		);
 	}
@@ -109,7 +112,8 @@ extends AbstractBinaryLegacyTypeHandlerTranslating<T>
 		final PersistenceTypeDefinition                 typeDefinition ,
 		final BinaryHandlerGenericValueClass<T>         typeHandler    ,
 		final XGettingTable<PersistenceTypeDefinitionMember, Similarity<PersistenceTypeDefinitionMember>>
-		                                                legacyToCurrent
+		                                                legacyToCurrent,
+		final PersistenceTypeDescriptionResolver        refactoringResolver
 	)
 	{
 		final BulkList<ArgumentSource> sources = BulkList.New();
@@ -129,7 +133,7 @@ extends AbstractBinaryLegacyTypeHandlerTranslating<T>
 			if(target != null)
 			{
 				sources.add(new ArgumentSource(
-					deriveReader(source, target, typeHandler),
+					deriveReader(source, target, typeHandler, refactoringResolver),
 					offset,
 					argumentIndex(typeHandler, target)
 				));
@@ -185,7 +189,8 @@ extends AbstractBinaryLegacyTypeHandlerTranslating<T>
 	private static BinaryValueReader deriveReader(
 		final PersistenceTypeDefinitionMember   source     ,
 		final PersistenceTypeDefinitionMember   target     ,
-		final BinaryHandlerGenericValueClass<?> typeHandler
+		final BinaryHandlerGenericValueClass<?> typeHandler,
+		final PersistenceTypeDescriptionResolver refactoringResolver
 	)
 	{
 		final boolean sourceIsStruct = source instanceof PersistenceTypeDefinitionMemberFieldValueStruct;
@@ -212,20 +217,16 @@ extends AbstractBinaryLegacyTypeHandlerTranslating<T>
 				(PersistenceTypeDefinitionMemberFieldValueStruct)target
 			;
 
-			if(!sourceStruct.equalsLayout(targetStruct))
-			{
-				/* Evolving a nested layout is what the owner's path does through provideEvolvingSetter.
-				 * Here the equivalent would read the persisted layout into the nested type's constructor,
-				 * which is the same shape one level down and is not built yet.
-				 */
-				throw new BinaryPersistenceException(
-					"The inlined layout of " + source.identifier() + " in value class "
-					+ typeHandler.type().getName() + " changed. Evolving an inlined layout inside a value"
-					+ " class is not supported yet; it is supported where the type is inlined into an owner."
-				);
-			}
-
-			return BinaryValueStructFunctions.provideValueReader(targetStruct);
+			/* A changed layout is paired member for member the same way the owner's path pairs it, so the
+			 * same renames are carried and the same shapes refused. An unchanged one skips that and is read
+			 * by its offsets directly.
+			 */
+			return sourceStruct.equalsLayout(targetStruct)
+				? BinaryValueStructFunctions.provideValueReader(targetStruct)
+				: BinaryValueStructFunctions.provideEvolvingValueReader(
+					sourceStruct, targetStruct, refactoringResolver
+				)
+			;
 		}
 
 		if(targetIsStruct)
@@ -380,6 +381,7 @@ extends AbstractBinaryLegacyTypeHandlerTranslating<T>
 		final BinaryHandlerGenericValueClass<T>         typeHandler    ,
 		final XGettingTable<PersistenceTypeDefinitionMember, Similarity<PersistenceTypeDefinitionMember>>
 		                                                legacyToCurrent,
+		final PersistenceTypeDescriptionResolver        refactoringResolver,
 		final PersistenceLegacyTypeHandlingListener<Binary> listener   ,
 		final boolean                                   switchByteOrder
 	)
@@ -390,7 +392,7 @@ extends AbstractBinaryLegacyTypeHandlerTranslating<T>
 		 */
 		super(typeDefinition, typeHandler, new BinaryValueSetter[0], new long[0], listener, switchByteOrder);
 
-		final BulkList<ArgumentSource> sources = deriveSources(typeDefinition, typeHandler, legacyToCurrent);
+		final BulkList<ArgumentSource> sources = deriveSources(typeDefinition, typeHandler, legacyToCurrent, refactoringResolver);
 
 		this.valueClassHandler = typeHandler;
 		this.defaults          = deriveDefaults(typeHandler);
