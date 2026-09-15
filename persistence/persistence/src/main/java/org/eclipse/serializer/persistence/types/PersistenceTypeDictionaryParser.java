@@ -385,10 +385,10 @@ public interface PersistenceTypeDictionaryParser
 		}
 
 		private static int parseValueStructDefinition(
-			final char[]            input ,
-			final int               iStart,
-			final int               iBound,
-			final TypeMemberBuilder member
+			final char[]                input ,
+			final int                   iStart,
+			final int                   iBound,
+			final AbstractMemberBuilder member
 		)
 		{
 			if(!equalsCharSequence(input, iStart, iBound, ARRAY_KEYWORD_VALUE))
@@ -419,8 +419,21 @@ public interface PersistenceTypeDictionaryParser
 					break;
 				}
 
-				i = parseFieldSimple(input, i, iBound, nestedMemberBuilder);
-				member.structMembers.add(nestedMemberBuilder.buildMemberField());
+				/* A member of the inlined layout may be inlined itself, which the appender writes by the same
+				 * dispatch it writes the outer one by. Reading it needs the same recursion, or a dictionary
+				 * this parser's own assembler produced could not be read back.
+				 */
+				final int afterNested = parseValueStructDefinition(input, i, iBound, nestedMemberBuilder);
+				if(afterNested != i)
+				{
+					i = afterNested;
+					member.structMembers.add(nestedMemberBuilder.buildMemberValueStruct());
+				}
+				else
+				{
+					i = parseFieldSimple(input, i, iBound, nestedMemberBuilder);
+					member.structMembers.add(nestedMemberBuilder.buildMemberField());
+				}
 				nestedMemberBuilder.reset();
 
 				// skip trailing whitespaces before bound is checked again

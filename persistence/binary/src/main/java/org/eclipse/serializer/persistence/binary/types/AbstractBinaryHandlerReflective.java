@@ -130,7 +130,13 @@ implements PersistenceTypeHandlerReflective<Binary, T>
 		final BulkList<PersistenceTypeDefinitionMemberField> inlinedMembers = BulkList.New();
 		for(final Field inlinedField : inlinedFields)
 		{
-			final PersistenceTypeDefinitionMemberField inlinedMember = declaredField(inlinedField, lengthResolver);
+			/* A member of the inlined layout may be inlined itself, and then carries no object id either, so
+			 * the slot stays free of them at every depth. The resolver has already established that the whole
+			 * tree is eligible and acyclic, so asking it again per level only derives what it decided.
+			 */
+			final PersistenceTypeDefinitionMemberField inlinedMember = deriveMember(
+				field.getType(), inlinedField, lengthResolver, inliningResolver
+			);
 			if(inlinedMember.hasReferences())
 			{
 				/* An inlined slot is a fixed-length non-reference member, which is what lets the storage engine

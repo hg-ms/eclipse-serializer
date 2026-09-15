@@ -136,13 +136,16 @@ public interface PersistenceValueInliningResolver
 
 	/**
 	 * Creates a resolver that inlines every field the passed selector accepts and that is eligible: the field's
-	 * declared type must be a concrete value class whose own persistable fields are all primitives.
+	 * declared type must be a concrete value class whose own persistable fields are each either a primitive or
+	 * inlinable by the same rules, so the eligibility test is recursive.
 	 * <p>
 	 * The type must be a value class because only an identity-less instance can be reconstructed from its
 	 * content alone without changing what the owner refers to. It must be the field's declared type because
 	 * the inlined form carries no type information, so a field typed as a supertype could not be read back.
-	 * Restricting the inlined fields to primitives keeps the inlined slot free of object ids, which is what
-	 * lets the storage engine skip it as it skips any other fixed-length non-reference member.
+	 * Requiring every member to be a primitive or itself inlined keeps the inlined slot free of object ids at
+	 * every depth, which is what lets the storage engine skip it as it skips any other fixed-length
+	 * non-reference member. A type that would contain itself is refused rather than expanded: such a class
+	 * compiles, but its layout has no fixed length.
 	 *
 	 * @param typeAnalyzer the analyzer determining a type's persistable fields; must not be {@code null}.
 	 * @param selector     decides which eligible fields to actually inline; must not be {@code null}.
@@ -194,12 +197,36 @@ public interface PersistenceValueInliningResolver
 		@Override
 		public XGettingEnum<Field> resolveInlinedFields(final Class<?> ownerType, final Field field)
 		{
+			return this.resolveInlinedFields(ownerType, field, HashEnum.New());
+		}
+
+		/**
+		 * @param enclosing the value types the current layout is already nested in, so a type that would
+		 *                  contain itself is refused instead of expanded forever.
+		 */
+		private XGettingEnum<Field> resolveInlinedFields(
+			final Class<?>           ownerType,
+			final Field              field    ,
+			final HashEnum<Class<?>> enclosing
+		)
+		{
 			final Class<?> valueType = field.getType();
 
 			if(!XReflect.isValueClass(valueType))
 			{
 				// not a value class, so there is nothing to decide and nothing worth reporting
 				return null;
+			}
+
+			if(enclosing.contains(valueType))
+			{
+				/* A value class may hold itself, directly or through another, and such a type compiles. Its
+				 * inlined layout would have no fixed length and the computation of it would not terminate,
+				 * so the cycle has to be refused rather than merely not reached.
+				 */
+				return decline(field, valueType.getName() + " already encloses this field, so the layout would"
+					+ " contain itself"
+				);
 			}
 
 			if(XReflect.isAbstract(valueType))
@@ -226,13 +253,32 @@ public interface PersistenceValueInliningResolver
 				return decline(field, valueType.getName() + " has persister or problematic fields");
 			}
 
-			for(final Field valueField : persistable)
+			enclosing.add(valueType);
+			try
 			{
-				if(!valueField.getType().isPrimitive())
+				for(final Field valueField : persistable)
 				{
-					// an inlined reference would need reachability handling the storage engine cannot see
-					return decline(field, valueType.getName() + " holds references");
+					if(valueField.getType().isPrimitive())
+					{
+						continue;
+					}
+
+					/* A member that is inlined itself carries no object id either, so the slot stays free of
+					 * them at every depth. One that is not leaves the slot holding a reference the storage
+					 * engine cannot see, which is what makes the whole layout ineligible rather than only
+					 * that member.
+					 */
+					if(this.resolveInlinedFields(valueType, valueField, enclosing) == null)
+					{
+						return decline(field, XReflect.deriveFieldIdentifier(valueField)
+							+ " is neither a primitive nor inlinable itself"
+						);
+					}
 				}
+			}
+			finally
+			{
+				enclosing.removeOne(valueType);
 			}
 
 			if(!isConstructorInvocable(valueType, persistable))

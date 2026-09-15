@@ -28,6 +28,7 @@ import org.eclipse.serializer.persistence.types.PersistenceEagerStoringFieldEval
 import org.eclipse.serializer.persistence.types.PersistenceFieldLengthResolver;
 import org.eclipse.serializer.persistence.types.PersistenceLoadHandler;
 import org.eclipse.serializer.persistence.types.PersistenceTypeDefinitionMemberFieldReflective;
+import org.eclipse.serializer.persistence.types.PersistenceTypeDefinitionMemberFieldValueStruct;
 import org.eclipse.serializer.persistence.types.PersistenceValueInliningResolver;
 import org.eclipse.serializer.reflect.XReflect;
 import org.eclipse.serializer.util.logging.Logging;
@@ -79,6 +80,7 @@ public final class BinaryHandlerGenericValueClass<T> extends AbstractBinaryHandl
 	 * @param lengthResolver       the field length resolver.
 	 * @param eagerEvaluator       the eager storing evaluator.
 	 * @param fieldHandlerProvider the custom field handler provider.
+	 * @param inliningResolver     the resolver deciding which of the type's own fields are inlined.
 	 * @param switchByteOrder      whether persisted values use a non-native byte order.
 	 *
 	 * @return the newly created handler.
@@ -93,6 +95,7 @@ public final class BinaryHandlerGenericValueClass<T> extends AbstractBinaryHandl
 		final PersistenceFieldLengthResolver        lengthResolver      ,
 		final PersistenceEagerStoringFieldEvaluator eagerEvaluator      ,
 		final BinaryFieldHandlerProvider            fieldHandlerProvider,
+		final PersistenceValueInliningResolver      inliningResolver    ,
 		final boolean                               switchByteOrder
 	)
 	{
@@ -104,6 +107,7 @@ public final class BinaryHandlerGenericValueClass<T> extends AbstractBinaryHandl
 			lengthResolver      ,
 			eagerEvaluator      ,
 			fieldHandlerProvider,
+			inliningResolver    ,
 			switchByteOrder
 		);
 	}
@@ -298,6 +302,7 @@ public final class BinaryHandlerGenericValueClass<T> extends AbstractBinaryHandl
 		final PersistenceFieldLengthResolver        lengthResolver      ,
 		final PersistenceEagerStoringFieldEvaluator eagerEvaluator      ,
 		final BinaryFieldHandlerProvider            fieldHandlerProvider,
+		final PersistenceValueInliningResolver      inliningResolver    ,
 		final boolean                               switchByteOrder
 	)
 	{
@@ -309,12 +314,7 @@ public final class BinaryHandlerGenericValueClass<T> extends AbstractBinaryHandl
 			lengthResolver      ,
 			eagerEvaluator      ,
 			fieldHandlerProvider,
-
-			/* This handler reads its members through readers rather than setters, since an identity-less
-			 * instance is constructed rather than populated. There is no reader for an inlined layout,
-			 * so the fields of a value class stay referenced.
-			 */
-			PersistenceValueInliningResolver.Disabled(),
+			inliningResolver    ,
 			switchByteOrder
 		);
 
@@ -332,7 +332,15 @@ public final class BinaryHandlerGenericValueClass<T> extends AbstractBinaryHandl
 		int  i      = 0;
 		for(final PersistenceTypeDefinitionMemberFieldReflective member : storingMembers)
 		{
-			this.readers[i]         = BinaryValueReader.provideReader(member.type());
+			/* An inlined member is read as the slot it is and constructed from it, which is the reader the
+			 * construction-based path needs and the reason the fields of a value class can be inlined at all.
+			 */
+			this.readers[i]         = member instanceof PersistenceTypeDefinitionMemberFieldValueStruct
+				? BinaryValueStructFunctions.provideValueReader(
+					(PersistenceTypeDefinitionMemberFieldValueStruct)member
+				)
+				: BinaryValueReader.provideReader(member.type())
+			;
 			this.readerOffsets[i]   = offset;
 			this.argumentIndices[i] = indexOfField(persistableFields, member.field());
 			offset += member.persistentMinimumLength();

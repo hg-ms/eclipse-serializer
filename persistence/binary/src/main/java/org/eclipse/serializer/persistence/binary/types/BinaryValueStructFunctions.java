@@ -92,8 +92,24 @@ public final class BinaryValueStructFunctions
 		for(final PersistenceTypeDefinitionMemberField member : members)
 		{
 			final Field field = validateField(member);
-			storers[i] = BinaryValueFunctions.getObjectValueStorer(field.getType(), false, switchByteOrder);
-			offsets[i] = XMemory.objectFieldOffset(field);
+			if(member instanceof PersistenceTypeDefinitionMemberFieldValueStruct)
+			{
+				/* A nested slot is written by a storer of its own, which reads its value through a handle on
+				 * the field and so needs no offset - a value laid out inside its owner has none to take.
+				 */
+				final PersistenceTypeDefinitionMemberFieldValueStruct nested =
+					(PersistenceTypeDefinitionMemberFieldValueStruct)member
+				;
+				storers[i] = provideStorer(
+					field, nested.members(), nested.persistentMinimumLength(), switchByteOrder
+				);
+				offsets[i] = 0;
+			}
+			else
+			{
+				storers[i] = BinaryValueFunctions.getObjectValueStorer(field.getType(), false, switchByteOrder);
+				offsets[i] = XMemory.objectFieldOffset(field);
+			}
 			i++;
 		}
 
@@ -135,7 +151,7 @@ public final class BinaryValueStructFunctions
 		for(final PersistenceTypeDefinitionMemberField member : members)
 		{
 			final Field field = validateField(member);
-			readers[i] = provideReader(field.getType(), switchByteOrder);
+			readers[i] = provideMemberReader(member, switchByteOrder);
 
 			/* The persistent order need not be the declaration order the constructor accepts, so every slot
 			 * carries the argument index it belongs to rather than relying on the two coinciding.
@@ -254,6 +270,60 @@ public final class BinaryValueStructFunctions
 		final boolean                                         switchByteOrder
 	)
 	{
+		final EvolvingLayout layout = evolvingLayout(
+			sourceMember, targetMember, refactoringResolver, switchByteOrder
+		);
+
+		return new EvolvingStructSetter(
+			BinaryValueHandleFunctions.provideFieldWriter(targetMember.field()),
+			layout.valueType                                                  ,
+			layout.readers                                                    ,
+			layout.targets                                                    ,
+			layout.constructor                                                ,
+			layout.defaults                                                   ,
+			layout.defaultedNames                                             ,
+			layout.structLength
+		);
+	}
+
+	/**
+	 * The reader for a nested inlined member whose described layout differs from the current one, which is
+	 * what an inlined type nested in another evolving under existing data produces. It answers one level
+	 * down exactly as {@link #provideEvolvingSetter} does for the owner's field.
+	 */
+	private static StructReader provideEvolvingNestedReader(
+		final PersistenceTypeDefinitionMemberFieldValueStruct sourceMember       ,
+		final PersistenceTypeDefinitionMemberFieldValueStruct targetMember       ,
+		final PersistenceTypeDescriptionResolver              refactoringResolver,
+		final boolean                                         switchByteOrder
+	)
+	{
+		final EvolvingLayout layout = evolvingLayout(
+			sourceMember, targetMember, refactoringResolver, switchByteOrder
+		);
+
+		return new EvolvingNestedStructReader(
+			layout.valueType     ,
+			layout.readers       ,
+			layout.targets       ,
+			layout.constructor   ,
+			layout.defaults      ,
+			layout.defaultedNames,
+			layout.structLength
+		);
+	}
+
+	/**
+	 * Matches a persisted inlined layout to the current one and derives everything needed to read the one
+	 * into the other, whether the result is written to a field or handed to an enclosing constructor.
+	 */
+	private static EvolvingLayout evolvingLayout(
+		final PersistenceTypeDefinitionMemberFieldValueStruct sourceMember       ,
+		final PersistenceTypeDefinitionMemberFieldValueStruct targetMember       ,
+		final PersistenceTypeDescriptionResolver              refactoringResolver,
+		final boolean                                         switchByteOrder
+	)
+	{
 		final Class<?> valueType = targetMember.type();
 		if(valueType == null)
 		{
@@ -265,14 +335,7 @@ public final class BinaryValueStructFunctions
 		/* The order the constructor accepts, derived from the type itself the way the unchanged path does,
 		 * and restricted to what the current layout describes.
 		 */
-		final HashEnum<Field> declarationOrder = HashEnum.New();
-		for(final Field field : valueType.getDeclaredFields())
-		{
-			if(!XReflect.isStatic(field) && isDescribed(targetMember, field))
-			{
-				declarationOrder.add(field);
-			}
-		}
+		final HashEnum<Field> declarationOrder = declarationOrder(targetMember, valueType);
 
 		final int              count   = sourceMember.members().intSize();
 		final StructReader[]   readers = new StructReader[count];
@@ -304,7 +367,26 @@ public final class BinaryValueStructFunctions
 			}
 			else
 			{
-				if(!field.getType().getName().equals(source.typeName()))
+				final PersistenceTypeDefinitionMemberField target = findMember(targetMember, targetName);
+
+				final boolean sourceIsStruct = source instanceof PersistenceTypeDefinitionMemberFieldValueStruct;
+				final boolean targetIsStruct = target instanceof PersistenceTypeDefinitionMemberFieldValueStruct;
+				if(sourceIsStruct != targetIsStruct)
+				{
+					/* The same member, inlined on one side and referenced on the other. The persisted bytes
+					 * are a whole layout where the current form expects one value, or the other way round,
+					 * and neither can be read as the other.
+					 */
+					throw new BinaryPersistenceException(
+						"Inlined layout member " + source.identifier() + " was persisted "
+						+ (sourceIsStruct ? "as an inlined layout and is now a single value"
+						                  : "as a single value and is now an inlined layout")
+						+ ". Changing whether a member of an inlined layout is itself inlined is not"
+						+ " supported."
+					);
+				}
+
+				if(!isSameType(refactoringResolver, source.typeName(), field.getType()))
 				{
 					throw new BinaryPersistenceException(
 						"Inlined layout member " + source.identifier() + " was persisted as "
@@ -312,7 +394,15 @@ public final class BinaryValueStructFunctions
 						+ ". Converting the type of an inlined member is not supported."
 					);
 				}
-				readers[i] = provideReader(field.getType(), switchByteOrder);
+				readers[i] = sourceIsStruct
+					? provideEvolvingNestedReader(
+						(PersistenceTypeDefinitionMemberFieldValueStruct)source,
+						(PersistenceTypeDefinitionMemberFieldValueStruct)target,
+						refactoringResolver                                   ,
+						switchByteOrder
+					)
+					: provideReader(field.getType(), switchByteOrder)
+				;
 				targets[i] = indexOf(declarationOrder, field);
 				if(!carried.add(field.getName()))
 				{
@@ -347,16 +437,84 @@ public final class BinaryValueStructFunctions
 			declarationOrder
 		);
 
-		return new EvolvingStructSetter(
-			BinaryValueHandleFunctions.provideFieldWriter(targetMember.field()),
-			valueType                                                         ,
-			readers                                                           ,
-			targets                                                           ,
-			constructor                                                       ,
-			defaultArguments(declarationOrder)                                ,
-			fieldNames(defaulted)                                             ,
+		return new EvolvingLayout(
+			valueType                         ,
+			readers                           ,
+			targets                           ,
+			constructor                       ,
+			defaultArguments(declarationOrder),
+			fieldNames(defaulted)             ,
 			sourceMember.persistentMinimumLength()
 		);
+	}
+
+	/**
+	 * Whether the persisted member's type is the current field's, either by name or because a refactoring
+	 * rule renamed it - the same rule that carries such a rename while the type is referenced rather than
+	 * nested, so the two forms answer alike.
+	 */
+	private static boolean isSameType(
+		final PersistenceTypeDescriptionResolver resolver     ,
+		final String                             persistedName,
+		final Class<?>                           currentType
+	)
+	{
+		if(currentType.getName().equals(persistedName))
+		{
+			return true;
+		}
+
+		return resolver != null && currentType.getName().equals(resolver.resolveRuntimeTypeName(persistedName));
+	}
+
+	/** The current member of the passed name, or {@code null} where the current layout has none. */
+	private static PersistenceTypeDefinitionMemberField findMember(
+		final PersistenceTypeDefinitionMemberFieldValueStruct targetMember,
+		final String                                         name
+	)
+	{
+		for(final PersistenceTypeDefinitionMemberField member : targetMember.members())
+		{
+			if(member.name().equals(name))
+			{
+				return member;
+			}
+		}
+
+		return null;
+	}
+
+	/** Everything needed to read a persisted inlined layout into the current one. */
+	private static final class EvolvingLayout
+	{
+		final Class<?>       valueType     ;
+		final StructReader[] readers       ;
+		final int[]          targets       ;
+		final MethodHandle   constructor   ;
+		final Object[]       defaults      ;
+		final String         defaultedNames;
+		final long           structLength  ;
+
+		EvolvingLayout(
+			final Class<?>       valueType     ,
+			final StructReader[] readers       ,
+			final int[]          targets       ,
+			final MethodHandle   constructor   ,
+			final Object[]       defaults      ,
+			final String         defaultedNames,
+			final long           structLength
+		)
+		{
+			super();
+			this.valueType      = valueType     ;
+			this.readers        = readers       ;
+			this.targets        = targets       ;
+			this.constructor    = constructor   ;
+			this.defaults       = defaults      ;
+			this.defaultedNames = defaultedNames;
+			this.structLength   = structLength  ;
+		}
+
 	}
 
 	/**
@@ -552,7 +710,10 @@ public final class BinaryValueStructFunctions
 			return Double.valueOf(0d);
 		}
 
-		throw new BinaryPersistenceException("Type cannot be inlined: " + type.getName());
+		/* A member of an inlined layout is either a primitive or inlined itself, and the default of the
+		 * latter is the absence of a value - which is what its own slot's marker states for it.
+		 */
+		return null;
 	}
 
 	private static Field findField(final XGettingEnum<Field> fields, final String name)
@@ -582,6 +743,28 @@ public final class BinaryValueStructFunctions
 		}
 
 		return false;
+	}
+
+	/**
+	 * Creates the translator copying an inlined slot from a persisted layout into the current one, for the
+	 * rerouting path that rewrites the binary form rather than writing into an instance.
+	 * <p>
+	 * Only applicable while the two layouts are equal, which the caller has to establish: the bytes are
+	 * copied as they are, so a layout that changed would be reinterpreted rather than converted. Byte order
+	 * needs no handling, since source and target are the same persisted form.
+	 *
+	 * @param structLength the slot's fixed length, including the null marker.
+	 *
+	 * @return the translator copying the slot.
+	 */
+	public static BinaryValueSetter provideRewriter(final long structLength)
+	{
+		return (srcAddress, target, trgOffset, handler) ->
+		{
+			XMemory.copyRange(srcAddress, trgOffset, structLength);
+
+			return srcAddress + structLength;
+		};
 	}
 
 	/**
@@ -626,6 +809,167 @@ public final class BinaryValueStructFunctions
 		}
 
 		return -1;
+	}
+
+	/**
+	 * Creates the reader for an inlined field of a value class, which is read out of the entity's own data
+	 * rather than out of an enclosing slot.
+	 * <p>
+	 * A value instance is constructed rather than populated, so its members are read through
+	 * {@link BinaryValueReader}s into an argument array instead of being written to fields. An inlined
+	 * member is read the same way, one level down: its slot's marker decides whether a value is
+	 * constructed at all.
+	 * <p>
+	 * Byte order needs no handling here, for the reason {@link BinaryValueReader#provideReader} states: a
+	 * load item for data in a non-native byte order reverses every value it reads.
+	 *
+	 * @param member the inlined member as the current type describes it.
+	 *
+	 * @return the reader for the inlined member.
+	 */
+	public static BinaryValueReader provideValueReader(
+		final PersistenceTypeDefinitionMemberFieldValueStruct member
+	)
+	{
+		final Class<?> valueType = member.type();
+		if(valueType == null)
+		{
+			throw new BinaryPersistenceException(
+				"Inlined layout member " + member.identifier() + " has no runtime type."
+			);
+		}
+
+		final HashEnum<Field> declarationOrder = declarationOrder(member, valueType);
+
+		final int                 count   = member.members().intSize();
+		final BinaryValueReader[] readers = new BinaryValueReader[count];
+		final long[]              offsets = new long[count];
+		final int[]               targets = new int[count];
+
+		// the marker precedes the content, so the first member sits behind it
+		long offset = NULL_MARKER_LENGTH;
+		int  i      = 0;
+		for(final PersistenceTypeDefinitionMemberField nested : member.members())
+		{
+			final Field field = validateField(nested);
+			readers[i] = nested instanceof PersistenceTypeDefinitionMemberFieldValueStruct
+				? provideValueReader((PersistenceTypeDefinitionMemberFieldValueStruct)nested)
+				: BinaryValueReader.provideReader(field.getType())
+			;
+			offsets[i] = offset;
+			targets[i] = indexOf(declarationOrder, field);
+			if(targets[i] < 0)
+			{
+				throw new BinaryPersistenceException(
+					"Inlined field " + field + " is not among the persistable fields of " + valueType.getName()
+				);
+			}
+			offset += nested.persistentMinimumLength();
+			i++;
+		}
+
+		final MethodHandle constructor = BinaryHandlerGenericValueClass.resolveConstructor(
+			valueType,
+			BinaryHandlerGenericValueClass.toParameterTypes(declarationOrder),
+			declarationOrder
+		);
+
+		return new StructValueReader(valueType, readers, offsets, targets, constructor, declarationOrder.intSize());
+	}
+
+	/**
+	 * The reader for one member of an inlined layout: a nested inlined member is read as a slot of its own
+	 * and constructed, anything else is read as the primitive it is.
+	 */
+	private static StructReader provideMemberReader(
+		final PersistenceTypeDefinitionMemberField member         ,
+		final boolean                             switchByteOrder
+	)
+	{
+		if(member instanceof PersistenceTypeDefinitionMemberFieldValueStruct)
+		{
+			return provideNestedReader(
+				(PersistenceTypeDefinitionMemberFieldValueStruct)member, switchByteOrder
+			);
+		}
+
+		return provideReader(validateField(member).getType(), switchByteOrder);
+	}
+
+	/**
+	 * The reader for an inlined member that is itself inlined: it reads the nested slot's own marker and
+	 * members, constructs the instance and places it in the enclosing layout's argument array, the same way
+	 * {@link StructSetter} does for the owner - only returning the value instead of writing it to a field.
+	 */
+	private static StructReader provideNestedReader(
+		final PersistenceTypeDefinitionMemberFieldValueStruct member         ,
+		final boolean                                        switchByteOrder
+	)
+	{
+		final Class<?> valueType = member.type();
+		if(valueType == null)
+		{
+			throw new BinaryPersistenceException(
+				"Inlined layout member " + member.identifier() + " has no runtime type."
+			);
+		}
+
+		final HashEnum<Field> declarationOrder = declarationOrder(member, valueType);
+
+		final int            count   = member.members().intSize();
+		final StructReader[] readers = new StructReader[count];
+		final int[]          targets = new int[count];
+
+		int i = 0;
+		for(final PersistenceTypeDefinitionMemberField nested : member.members())
+		{
+			final Field field = validateField(nested);
+			readers[i] = provideMemberReader(nested, switchByteOrder);
+			targets[i] = indexOf(declarationOrder, field);
+			if(targets[i] < 0)
+			{
+				throw new BinaryPersistenceException(
+					"Inlined field " + field + " is not among the persistable fields of " + valueType.getName()
+				);
+			}
+			i++;
+		}
+
+		final MethodHandle constructor = BinaryHandlerGenericValueClass.resolveConstructor(
+			valueType,
+			BinaryHandlerGenericValueClass.toParameterTypes(declarationOrder),
+			declarationOrder
+		);
+
+		return new NestedStructReader(
+			valueType                       ,
+			readers                         ,
+			targets                         ,
+			constructor                     ,
+			declarationOrder.intSize()      ,
+			member.persistentMinimumLength()
+		);
+	}
+
+	/**
+	 * The inlined type's described fields in declaration order, which is the order its constructor accepts
+	 * them in - derived from the type itself, as the persistent order need not match it.
+	 */
+	private static HashEnum<Field> declarationOrder(
+		final PersistenceTypeDefinitionMemberFieldValueStruct member   ,
+		final Class<?>                                       valueType
+	)
+	{
+		final HashEnum<Field> declarationOrder = HashEnum.New();
+		for(final Field field : valueType.getDeclaredFields())
+		{
+			if(!XReflect.isStatic(field) && isDescribed(member, field))
+			{
+				declarationOrder.add(field);
+			}
+		}
+
+		return declarationOrder;
 	}
 
 	private static StructReader provideReader(final Class<?> type, final boolean switchByteOrder)
@@ -748,6 +1092,228 @@ public final class BinaryValueStructFunctions
 		 * @return the number of bytes read.
 		 */
 		long readValue(long address, Object[] args, int index);
+	}
+
+	/**
+	 * Reads a nested inlined slot and returns the instance it describes, so the layout enclosing it can pass
+	 * it to its own constructor. An absent marker yields {@code null}, and the slot's fixed length is
+	 * returned either way - that length, not the bytes actually read, is what the enclosing layout advances
+	 * by.
+	 */
+	/**
+	 * Reads an inlined slot out of a value class's own entity data and returns the instance it describes,
+	 * so the enclosing value class can pass it to its constructor. An absent marker yields {@code null}.
+	 */
+	private static final class StructValueReader implements BinaryValueReader
+	{
+		private final Class<?>            valueType    ;
+		private final BinaryValueReader[] readers      ;
+		private final long[]              offsets      ;
+		private final int[]               targets      ;
+		private final MethodHandle        constructor  ;
+		private final int                 argumentCount;
+
+		StructValueReader(
+			final Class<?>            valueType    ,
+			final BinaryValueReader[] readers      ,
+			final long[]              offsets      ,
+			final int[]               targets      ,
+			final MethodHandle        constructor  ,
+			final int                 argumentCount
+		)
+		{
+			super();
+			this.valueType     = valueType    ;
+			this.readers       = readers      ;
+			this.offsets       = offsets      ;
+			this.targets       = targets      ;
+			this.constructor   = constructor  ;
+			this.argumentCount = argumentCount;
+		}
+
+		@Override
+		public Object readValue(final Binary data, final long offset, final PersistenceLoadHandler handler)
+		{
+			if(data.read_byte(offset) == NULL_MARKER_ABSENT)
+			{
+				return null;
+			}
+
+			final Object[] args = new Object[this.argumentCount];
+			for(int i = 0; i < this.readers.length; i++)
+			{
+				args[this.targets[i]] = this.readers[i].readValue(data, offset + this.offsets[i], handler);
+			}
+
+			try
+			{
+				return (Object)this.constructor.invokeExact(args);
+			}
+			catch(final Error e)
+			{
+				throw e;
+			}
+			catch(final Throwable t)
+			{
+				throw new BinaryPersistenceException(
+					"Could not construct inlined instance of " + this.valueType.getName(), t
+				);
+			}
+		}
+
+	}
+
+	/**
+	 * Reads a nested inlined slot whose described layout differs from the current one: the argument array
+	 * starts from the current type's defaults, so a member the persisted layout does not carry keeps its
+	 * default, and a reader for a member the type no longer has advances past it without writing.
+	 */
+	private static final class EvolvingNestedStructReader implements StructReader
+	{
+		private final Class<?>       valueType     ;
+		private final StructReader[] readers       ;
+		private final int[]          targets       ;
+		private final MethodHandle   constructor   ;
+		private final Object[]       defaults      ;
+		private final String         defaultedNames;
+		private final long           structLength  ;
+
+		EvolvingNestedStructReader(
+			final Class<?>       valueType     ,
+			final StructReader[] readers       ,
+			final int[]          targets       ,
+			final MethodHandle   constructor   ,
+			final Object[]       defaults      ,
+			final String         defaultedNames,
+			final long           structLength
+		)
+		{
+			super();
+			this.valueType      = valueType     ;
+			this.readers        = readers       ;
+			this.targets        = targets       ;
+			this.constructor    = constructor   ;
+			this.defaults       = defaults      ;
+			this.defaultedNames = defaultedNames;
+			this.structLength   = structLength  ;
+		}
+
+		@Override
+		public long readValue(final long address, final Object[] args, final int index)
+		{
+			if(XMemory.get_byte(address) == NULL_MARKER_ABSENT)
+			{
+				args[index] = null;
+
+				return this.structLength;
+			}
+
+			final Object[] nested = this.defaults.clone();
+
+			long a = address + NULL_MARKER_LENGTH;
+			for(int i = 0; i < this.readers.length; i++)
+			{
+				a += this.readers[i].readValue(a, nested, this.targets[i]);
+			}
+
+			args[index] = this.createValue(nested);
+
+			return this.structLength;
+		}
+
+		private Object createValue(final Object[] args)
+		{
+			try
+			{
+				return (Object)this.constructor.invokeExact(args);
+			}
+			catch(final Error e)
+			{
+				throw e;
+			}
+			catch(final Throwable t)
+			{
+				throw new BinaryPersistenceException(
+					"Could not construct nested inlined instance of " + this.valueType.getName()
+					+ (this.defaultedNames.isEmpty()
+						? ""
+						: ", whose persisted layout did not carry " + this.defaultedNames
+						+ " so it was constructed with the default")
+					, t
+				);
+			}
+		}
+
+	}
+
+	private static final class NestedStructReader implements StructReader
+	{
+		private final Class<?>       valueType    ;
+		private final StructReader[] readers      ;
+		private final int[]          targets      ;
+		private final MethodHandle   constructor  ;
+		private final int            argumentCount;
+		private final long           structLength ;
+
+		NestedStructReader(
+			final Class<?>       valueType    ,
+			final StructReader[] readers      ,
+			final int[]          targets      ,
+			final MethodHandle   constructor  ,
+			final int            argumentCount,
+			final long           structLength
+		)
+		{
+			super();
+			this.valueType     = valueType    ;
+			this.readers       = readers      ;
+			this.targets       = targets      ;
+			this.constructor   = constructor  ;
+			this.argumentCount = argumentCount;
+			this.structLength  = structLength ;
+		}
+
+		@Override
+		public long readValue(final long address, final Object[] args, final int index)
+		{
+			if(XMemory.get_byte(address) == NULL_MARKER_ABSENT)
+			{
+				args[index] = null;
+
+				return this.structLength;
+			}
+
+			final Object[] nested = new Object[this.argumentCount];
+
+			long a = address + NULL_MARKER_LENGTH;
+			for(int i = 0; i < this.readers.length; i++)
+			{
+				a += this.readers[i].readValue(a, nested, this.targets[i]);
+			}
+
+			args[index] = this.createValue(nested);
+
+			return this.structLength;
+		}
+
+		private Object createValue(final Object[] args)
+		{
+			try
+			{
+				return (Object)this.constructor.invokeExact(args);
+			}
+			catch(final Error e)
+			{
+				throw e;
+			}
+			catch(final Throwable t)
+			{
+				throw new BinaryPersistenceException(
+					"Could not construct nested inlined instance of " + this.valueType.getName(), t
+				);
+			}
+		}
+
 	}
 
 	private static final class StructStorer implements BinaryValueStorer

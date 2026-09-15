@@ -567,17 +567,39 @@ public interface BinaryValueTranslatorProvider
 				return BinaryValueTranslators.provideReferenceValueBinaryTranslator(sourceMember, targetMember);
 			}
 
-			if(sourceMember instanceof PersistenceTypeDescriptionMemberFieldValueStruct
-			|| targetMember instanceof PersistenceTypeDescriptionMemberFieldValueStruct
-			)
+			if(sourceMember instanceof PersistenceTypeDescriptionMemberFieldValueStruct)
 			{
-				/* This path rewrites one binary form into another, which for an inlined slot would mean
-				 * relaying out its content. No handler using it inlines, so the guard turns changing that
-				 * into a failure rather than a silent misread.
+				if(targetMember == null)
+				{
+					// the current type no longer has the field: step over the slot, writing nothing
+					return this.provideValueSkipper(sourceMember);
+				}
+
+				/* This path rewrites one binary form into another, so an unchanged slot is copied as it is.
+				 * A changed one would have to be laid out anew, which is refused rather than reinterpreted:
+				 * the bytes of one layout read as another are wrong values, not a conversion.
 				 */
+				if(sourceMember.equalsLayout(targetMember))
+				{
+					return BinaryValueStructFunctions.provideRewriter(
+						sourceMember.persistentMinimumLength()
+					);
+				}
+
 				throw new BinaryPersistenceException(
-					"Inlined field " + toTypedIdentifier(sourceMember) + " cannot be rewritten into the"
-					+ " current layout."
+					"The inlined layout of " + toTypedIdentifier(sourceMember) + " changed and cannot be"
+					+ " rewritten into " + toTypedIdentifier(targetMember) + ": a type whose instances are"
+					+ " constructed rather than populated is read through its current layout, which the"
+					+ " persisted bytes no longer describe."
+				);
+			}
+
+			if(targetMember instanceof PersistenceTypeDescriptionMemberFieldValueStruct)
+			{
+				throw new BinaryPersistenceException(
+					"Field " + toTypedIdentifier(sourceMember) + " cannot be rewritten into the inlined slot "
+					+ toTypedIdentifier(targetMember) + ": an inlined slot carries the content of a whole"
+					+ " type, which a single persisted value does not."
 				);
 			}
 

@@ -269,6 +269,7 @@ public interface BinaryTypeHandlerCreator extends PersistenceTypeHandlerCreator<
 						this.lengthResolver(),
 						this.eagerStoringFieldEvaluator(),
 						this.fieldHandlerProvider        ,
+						this.inliningResolver            ,
 						this.switchByteOrder
 					);
 				}
