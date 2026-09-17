@@ -19,7 +19,6 @@ import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
-import java.lang.reflect.Parameter;
 
 import org.eclipse.serializer.collections.types.XGettingEnum;
 import org.eclipse.serializer.persistence.binary.exceptions.BinaryPersistenceException;
@@ -27,12 +26,11 @@ import org.eclipse.serializer.persistence.exceptions.PersistenceExceptionTypeNot
 import org.eclipse.serializer.persistence.types.PersistenceEagerStoringFieldEvaluator;
 import org.eclipse.serializer.persistence.types.PersistenceFieldLengthResolver;
 import org.eclipse.serializer.persistence.types.PersistenceLoadHandler;
+import org.eclipse.serializer.persistence.types.PersistenceStoreHandler;
 import org.eclipse.serializer.persistence.types.PersistenceTypeDefinitionMemberFieldReflective;
 import org.eclipse.serializer.persistence.types.PersistenceTypeDefinitionMemberFieldValueStruct;
 import org.eclipse.serializer.persistence.types.PersistenceValueInliningResolver;
 import org.eclipse.serializer.reflect.XReflect;
-import org.eclipse.serializer.util.logging.Logging;
-import org.slf4j.Logger;
 
 /**
  * Reflective type handler for value classes (JEP 401).
@@ -46,7 +44,13 @@ import org.slf4j.Logger;
  * The constructor is required to accept the persistable instance fields in declaration order, which
  * is exactly what a record's canonical constructor does. If no such constructor exists, the type
  * cannot be handled generically and a custom type handler must be registered for it. This is
- * validated once, at handler creation, rather than at store or load time.
+ * established once, at handler creation.
+ * <p>
+ * It is required to do more than exist: loading hands it the stored field values, so it is the inverse
+ * of storing only if it assigns each argument to the corresponding field unmodified. That cannot be
+ * read off the type, so it is verified by constructing from chosen values at handler creation and, where
+ * that cannot answer, against the first instance stored - see {@link ValueClassConstructorContract},
+ * which also states why the identity case needs no such check.
  * <p>
  * Note that {@link #create(Binary, PersistenceLoadHandler)} resolves the instance's references,
  * unlike the identity case where they are resolved in {@code initializeState}. The loader
@@ -57,14 +61,6 @@ import org.slf4j.Logger;
  */
 public final class BinaryHandlerGenericValueClass<T> extends AbstractBinaryHandlerReflective<T>
 {
-	///////////////////////////////////////////////////////////////////////////
-	// constants //
-	//////////////
-
-	private final static Logger logger = Logging.getLogger(BinaryHandlerGenericValueClass.class);
-
-
-
 	///////////////////////////////////////////////////////////////////////////
 	// static methods //
 	///////////////////
@@ -140,80 +136,6 @@ public final class BinaryHandlerGenericValueClass<T> extends AbstractBinaryHandl
 		}
 	}
 
-	/**
-	 * Guarantees that the constructor found by parameter types really accepts the fields in their
-	 * declaration order.
-	 * <p>
-	 * Matching by type alone is only unambiguous while all parameter types differ: then there is
-	 * exactly one way to assign the fields to them. As soon as two parameters share a type, a
-	 * constructor declaring them in the opposite order matches just as well and would silently swap
-	 * the two values on every load. Parameter names settle it when the class was compiled with them,
-	 * a record settles it by definition, and without either the type cannot be handled generically.
-	 */
-	private static void validateConstructorOrder(
-		final Class<?>            type             ,
-		final Constructor<?>      constructor      ,
-		final XGettingEnum<Field> persistableFields
-	)
-	{
-		if(type.isRecord() || !hasRepeatedType(constructor.getParameterTypes()))
-		{
-			return;
-		}
-
-		final Parameter[] parameters = constructor.getParameters();
-
-		if(!parameters[0].isNamePresent())
-		{
-			/* Without parameter names the order cannot be checked at all. Rejecting every such type
-			 * would make the common case (a constructor that does list the fields in order) fail, so
-			 * this is reported instead of enforced.
-			 */
-			logger.warn(
-				"Value class {} has several constructor parameters of the same type and was compiled"
-				+ " without parameter names, so it cannot be verified that its constructor accepts the"
-				+ " fields in declaration order. A constructor declaring them in a different order would"
-				+ " silently swap their values. Compile with -parameters or use a record to have this"
-				+ " checked.",
-				type.getName()
-			);
-
-			return;
-		}
-
-		int i = 0;
-		for(final Field field : persistableFields)
-		{
-			final Parameter parameter = parameters[i++];
-			if(!parameter.getName().equals(field.getName()))
-			{
-				throw new PersistenceExceptionTypeNotPersistable(type,
-					new BinaryPersistenceException(
-						"Constructor of value class " + type.getName() + " does not accept the fields in"
-						+ " declaration order: parameter " + (i - 1) + " is named " + parameter.getName()
-						+ " but the field at that position is " + field.getName() + "."
-					)
-				);
-			}
-		}
-	}
-
-	private static boolean hasRepeatedType(final Class<?>[] parameterTypes)
-	{
-		for(int i = 0; i < parameterTypes.length; i++)
-		{
-			for(int j = i + 1; j < parameterTypes.length; j++)
-			{
-				if(parameterTypes[i] == parameterTypes[j])
-				{
-					return true;
-				}
-			}
-		}
-
-		return false;
-	}
-
 	static MethodHandle resolveConstructor(
 		final Class<?>            type             ,
 		final Class<?>[]          parameterTypes   ,
@@ -237,8 +159,6 @@ public final class BinaryHandlerGenericValueClass<T> extends AbstractBinaryHandl
 				)
 			);
 		}
-
-		validateConstructorOrder(type, constructor, persistableFields);
 
 		try
 		{
@@ -282,6 +202,9 @@ public final class BinaryHandlerGenericValueClass<T> extends AbstractBinaryHandl
 	////////////////////
 
 	private final MethodHandle       constructor    ;
+
+	// settled at handler creation where it can be, otherwise on the first instance stored. See #store.
+	private final ValueClassConstructorContract constructorContract;
 
 	/* Kept so a legacy handler can build its own readers over the persisted layout and still place the
 	 * values where this type's constructor expects them. See BinaryLegacyTypeHandlerValueClass.
@@ -356,6 +279,8 @@ public final class BinaryHandlerGenericValueClass<T> extends AbstractBinaryHandl
 
 		this.persistableFields = persistableFields;
 		this.constructor       = resolveConstructor(type, toParameterTypes(persistableFields), persistableFields);
+
+		this.constructorContract = ValueClassConstructorContract.New(type, persistableFields, this.constructor);
 	}
 
 	/**
@@ -513,6 +438,28 @@ public final class BinaryHandlerGenericValueClass<T> extends AbstractBinaryHandl
 	///////////////////////////////////////////////////////////////////////////
 	// methods //
 	////////////
+
+	/**
+	 * Verifies the constructor contract before storing the first instance, then stores as the reflective
+	 * base does.
+	 * <p>
+	 * A no-op where the contract was already settled at handler creation, which is the usual case. It
+	 * matters for what a probe cannot answer - a constructor that rejects the probing values, or a layout
+	 * holding a reference - and then this is the first point an instance exists, still before any byte of
+	 * it is written. See {@link ValueClassConstructorContract}.
+	 */
+	@Override
+	public void store(
+		final Binary                          data    ,
+		final T                               instance,
+		final long                            objectId,
+		final PersistenceStoreHandler<Binary> handler
+	)
+	{
+		this.constructorContract.validate(instance);
+
+		super.store(data, instance, objectId, handler);
+	}
 
 	@Override
 	public T create(final Binary data, final PersistenceLoadHandler handler)

@@ -114,11 +114,27 @@ public final class BinaryValueStructFunctions
 			i++;
 		}
 
+		/* The slot is read back by constructing the inlined type from it, so the same constructor contract
+		 * the type's own entity handler verifies applies here. Resolved rather than passed in: the setter
+		 * resolves it too, and a storer that never wrote a value would otherwise never have it checked.
+		 */
+		final Class<?>        valueType        = ownerField.getType();
+		final HashEnum<Field> declarationOrder = declarationOrder(members, valueType);
+
 		return new StructStorer(
 			BinaryValueHandleFunctions.provideFieldReader(ownerField),
 			storers,
 			offsets,
-			structLength
+			structLength,
+			ValueClassConstructorContract.New(
+				valueType,
+				declarationOrder,
+				BinaryHandlerGenericValueClass.resolveConstructor(
+					valueType,
+					BinaryHandlerGenericValueClass.toParameterTypes(declarationOrder),
+					declarationOrder
+				)
+			)
 		);
 	}
 
@@ -841,7 +857,15 @@ public final class BinaryValueStructFunctions
 		final Field                                          field
 	)
 	{
-		for(final PersistenceTypeDefinitionMemberField describedMember : member.members())
+		return isDescribed(member.members(), field);
+	}
+
+	private static boolean isDescribed(
+		final XGettingSequence<? extends PersistenceTypeDefinitionMemberField> members,
+		final Field                                                            field
+	)
+	{
+		for(final PersistenceTypeDefinitionMemberField describedMember : members)
 		{
 			if(field.getName().equals(describedMember.name()))
 			{
@@ -1169,10 +1193,18 @@ public final class BinaryValueStructFunctions
 		final Class<?>                                       valueType
 	)
 	{
+		return declarationOrder(member.members(), valueType);
+	}
+
+	private static HashEnum<Field> declarationOrder(
+		final XGettingSequence<? extends PersistenceTypeDefinitionMemberField> members  ,
+		final Class<?>                                                         valueType
+	)
+	{
 		final HashEnum<Field> declarationOrder = HashEnum.New();
 		for(final Field field : valueType.getDeclaredFields())
 		{
-			if(!XReflect.isStatic(field) && isDescribed(member, field))
+			if(!XReflect.isStatic(field) && isDescribed(members, field))
 			{
 				declarationOrder.add(field);
 			}
@@ -1599,16 +1631,18 @@ public final class BinaryValueStructFunctions
 
 	private static final class StructStorer implements BinaryValueStorer
 	{
-		private final FieldReader         ownerReader ;
-		private final BinaryValueStorer[] storers     ;
-		private final long[]              offsets     ;
-		private final long                structLength;
+		private final FieldReader                   ownerReader ;
+		private final BinaryValueStorer[]           storers     ;
+		private final long[]                        offsets     ;
+		private final long                          structLength;
+		private final ValueClassConstructorContract contract    ;
 
 		StructStorer(
-			final FieldReader         ownerReader ,
-			final BinaryValueStorer[] storers     ,
-			final long[]              offsets     ,
-			final long                structLength
+			final FieldReader                   ownerReader ,
+			final BinaryValueStorer[]           storers     ,
+			final long[]                        offsets     ,
+			final long                          structLength,
+			final ValueClassConstructorContract contract
 		)
 		{
 			super();
@@ -1616,6 +1650,7 @@ public final class BinaryValueStructFunctions
 			this.storers      = storers     ;
 			this.offsets      = offsets     ;
 			this.structLength = structLength;
+			this.contract     = contract    ;
 		}
 
 		@Override
@@ -1634,6 +1669,9 @@ public final class BinaryValueStructFunctions
 				XMemory.fillMemory(targetAddress, this.structLength, (byte)0);
 				return targetAddress + this.structLength;
 			}
+
+			// before the first slot is written, so a violation is reported instead of persisted
+			this.contract.validate(value);
 
 			XMemory.set_byte(targetAddress, NULL_MARKER_PRESENT);
 
