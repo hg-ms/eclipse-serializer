@@ -137,8 +137,13 @@ public class Persistence
 	static final long START_CID_REAL = START_CID_BASE +    10_000L; // first 10K reserved for JLS constants
 	static final long START_TID_REAL = START_TID_BASE + 1_000_000L; // first new type gets 1M1 assigned.
 
-	// wrapper types are migrated to value classes as a group, so Boolean is representative.
-	static final boolean JAVA_CONSTANTS_ARE_VALUE_INSTANCES = XReflect.isValueClass(Boolean.class);
+	/* Read from XReflect rather than probed here, so the two cannot drift apart: this decides whether
+	 * #registerJavaConstants registers the wrapper constants at all, and registering a single value
+	 * instance throws IdentityException out of the registry's weak entry. That probe covers every
+	 * wrapper type registered below, any one of which is enough - see #isValueClassEnabledRuntime for
+	 * why "any" and not "all".
+	 */
+	static final boolean JAVA_CONSTANTS_ARE_VALUE_INSTANCES = XReflect.isValueClassEnabledRuntime();
 
 	// CHECKSTYLE.OFF: ConstantName: type names are intentionally unchanged
 

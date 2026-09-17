@@ -66,6 +66,19 @@ public final class XReflect
 	// null on a JVM without value class support (JEP 401). See #isValueClass.
 	private static final MethodHandle CLASS_IS_VALUE = resolveClassIsValue();
 
+	/* Any one of the JDK's cached-constant wrapper types being a value class is enough, and
+	 * deliberately so - see #isValueClassEnabledRuntime. Must be declared after CLASS_IS_VALUE,
+	 * static initializers running in declaration order.
+	 */
+	private static final boolean VALUE_CLASSES_ENABLED =
+		isValueClass(Boolean.class)
+		|| isValueClass(Byte.class)
+		|| isValueClass(Short.class)
+		|| isValueClass(Character.class)
+		|| isValueClass(Integer.class)
+		|| isValueClass(Long.class)
+	;
+
 
 
 	///////////////////////////////////////////////////////////////////////////
@@ -348,8 +361,22 @@ public final class XReflect
 	 * <p>
 	 * Deliberately not the mere presence of {@code Class#isValue}: that method exists on every JDK
 	 * since JEP 401 became a preview feature and reports {@literal false} for everything unless the
-	 * JVM was started with {@code --enable-preview}. A wrapper type answers the actual state, since
+	 * JVM was started with {@code --enable-preview}. The wrapper types answer the actual state, since
 	 * a user-defined value class is a preview class file that cannot be loaded without that flag.
+	 * <p>
+	 * <b>Any</b> of them suffices, not all, and the asymmetry is the point. The reader with something
+	 * at stake is the constant registry: it holds its entries weakly, so registering one wrapper
+	 * constant that is a value instance throws {@code IdentityException} and the storage does not
+	 * open. Answering {@literal true} while they are all still identity classes costs nothing - their
+	 * constant ids are then resolved arithmetically instead of from the registry, and over the cached
+	 * range that yields the very same instances. So the expensive mistake is answering
+	 * {@literal false} too readily, and one migrated wrapper is enough to rule it out.
+	 * <p>
+	 * For that reader this is exact. For the other kind - "can an identity-less instance exist at
+	 * all", which is what a {@code GigaMap} segment asks before keeping a stored-state record - it
+	 * stays a proxy: a JDK enabling value classes without migrating the wrappers would answer
+	 * {@literal false} while a user's value class worked. That costs such an entity a fresh object id
+	 * per store, nothing more.
 	 *
 	 * @return whether an instance without identity can exist in this JVM.
 	 *
@@ -357,8 +384,7 @@ public final class XReflect
 	 */
 	public static boolean isValueClassEnabledRuntime()
 	{
-		// wrapper types are migrated to value classes as a group, so Integer is representative.
-		return isValueClass(Integer.class);
+		return VALUE_CLASSES_ENABLED;
 	}
 
 	private static MethodHandle resolveClassIsValue()
