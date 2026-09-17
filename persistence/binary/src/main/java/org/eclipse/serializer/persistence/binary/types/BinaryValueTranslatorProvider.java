@@ -415,6 +415,13 @@ public interface BinaryValueTranslatorProvider
 		 * one step and so cannot be redirected by swapping the setter. Any other source form is refused
 		 * rather than written blindly - writing it is precisely what this guards against.
 		 *
+		 * Only applicable where the translator writes into an <i>instance</i>, which is the reflective
+		 * legacy path. The rewriting path hands its setters a {@literal null} target and an address to
+		 * write to, and a handle writes into neither - it would fail on the null. That path cannot reach
+		 * here today, its target members being generic rather than reflective, so this is stated rather
+		 * than guarded: a guard would suggest the case is expected and leave the reader wondering what
+		 * produces it.
+		 *
 		 * @param sourceMember    the legacy member being read.
 		 * @param targetMember    the current member being written, whose type is a value class.
 		 * @param switchByteOrder whether the persisted form has the opposite byte order.

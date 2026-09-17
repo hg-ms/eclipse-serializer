@@ -197,8 +197,9 @@ public interface PersistenceLegacyTypeHandlerCreator<D>
 			/* A value class handler is reflective in how it derives its members, but its instances
 			 * cannot be created empty and populated afterwards: it builds them from the persisted
 			 * values in #create. The reflective legacy branch would hand it the LEGACY layout there
-			 * and then populate fields, so such a handler has to take the rerouting branch, which
-			 * rewrites the data into the current layout first.
+			 * and then populate fields, so such a handler must not take it. What it takes instead is
+			 * decided one layer down: the binary creator intercepts it into a handler that reads the
+			 * persisted layout directly and constructs from it, rewriting nothing.
 			 */
 			if(result.currentTypeHandler() instanceof PersistenceTypeHandlerReflective<?, ?>
 				&& !result.currentTypeHandler().isValueClassType()

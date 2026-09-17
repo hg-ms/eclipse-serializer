@@ -1336,12 +1336,6 @@ public final class BinaryValueStructFunctions
 	}
 
 	/**
-	 * Reads a nested inlined slot and returns the instance it describes, so the layout enclosing it can pass
-	 * it to its own constructor. An absent marker yields {@code null}, and the slot's fixed length is
-	 * returned either way - that length, not the bytes actually read, is what the enclosing layout advances
-	 * by.
-	 */
-	/**
 	 * Reads an inlined slot out of a value class's own entity data and returns the instance it describes,
 	 * so the enclosing value class can pass it to its constructor. An absent marker yields {@code null}.
 	 */
@@ -1404,11 +1398,6 @@ public final class BinaryValueStructFunctions
 
 	}
 
-	/**
-	 * Reads a nested inlined slot whose described layout differs from the current one: the argument array
-	 * starts from the current type's defaults, so a member the persisted layout does not carry keeps its
-	 * default, and a reader for a member the type no longer has advances past it without writing.
-	 */
 	/**
 	 * Reads an inlined slot whose described layout differs from the current one out of a value class's own
 	 * entity data. The argument array starts from the current type's defaults, so a member the persisted
@@ -1481,6 +1470,11 @@ public final class BinaryValueStructFunctions
 
 	}
 
+	/**
+	 * Reads a nested inlined slot whose described layout differs from the current one: the argument array
+	 * starts from the current type's defaults, so a member the persisted layout does not carry keeps its
+	 * default, and a reader for a member the type no longer has advances past it without writing.
+	 */
 	private static final class EvolvingNestedStructReader implements StructReader
 	{
 		private final Class<?>       valueType     ;
@@ -1559,6 +1553,12 @@ public final class BinaryValueStructFunctions
 
 	}
 
+	/**
+	 * Reads a nested inlined slot and returns the instance it describes, so the layout enclosing it can pass
+	 * it to its own constructor. An absent marker yields {@code null}, and the slot's fixed length is
+	 * returned either way - that length, not the bytes actually read, is what the enclosing layout advances
+	 * by.
+	 */
 	private static final class NestedStructReader implements StructReader
 	{
 		private final Class<?>       valueType    ;

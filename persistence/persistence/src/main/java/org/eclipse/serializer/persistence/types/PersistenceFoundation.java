@@ -607,7 +607,7 @@ extends Cloneable<PersistenceFoundation<D, F>>,
 		private PersistenceFieldEvaluator                      fieldEvaluatorEnum              ;
 		private PersistenceFieldEvaluator                      fieldEvaluatorCollection        ;
 		private PersistenceEagerStoringFieldEvaluator          eagerStoringFieldEvaluator      ;
-		private PersistenceValueInliningResolver              valueInliningResolver           ;
+		private PersistenceValueInliningResolver               valueInliningResolver           ;
 
 		// (14.09.2018 TM)NOTE: that type handling stuff grows to a size where it could use its own foundation.
 		private PersistenceTypeManager                         typeManager                     ;

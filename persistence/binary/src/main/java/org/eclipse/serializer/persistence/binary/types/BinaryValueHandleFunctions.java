@@ -439,13 +439,59 @@ public final class BinaryValueHandleFunctions
 			if(!(Boolean)invoke(IS_FLAT_FIELD, field, field))
 			{
 				// not laid out inside its owner, so the field holds a plain reference.
-				return (owner, value) -> invoke(PUT_REFERENCE, field, owner, offset, value);
+				return bindWriter(field, PUT_REFERENCE, Long.valueOf(offset));
 			}
 
-			final int      layout = (Integer)invoke(FIELD_LAYOUT, field, field);
-			final Class<?> type   = field.getType();
+			final int layout = (Integer)invoke(FIELD_LAYOUT, field, field);
 
-			return (owner, value) -> invoke(PUT_FLAT_VALUE, field, owner, offset, layout, type, value);
+			return bindWriter(field, PUT_FLAT_VALUE, Long.valueOf(offset), Integer.valueOf(layout), field.getType());
+		}
+
+		/**
+		 * Binds everything but the owner and the value into a {@link MethodHandle}, so a write is an exact
+		 * invocation rather than a reflective call.
+		 * <p>
+		 * The introspection above happens once per field and can stay reflective. This does not: it is on
+		 * the load path, once per field of every record instance built, and {@link Method#invoke} would
+		 * allocate a varargs array and box the offset and the layout on each of them.
+		 *
+		 * @param field  the field being written, for the failure message.
+		 * @param method the accessor to bind.
+		 * @param bound  the arguments after the owner and before the value.
+		 *
+		 * @return the writer for that field.
+		 */
+		private static FieldWriter bindWriter(final Field field, final Method method, final Object... bound)
+		{
+			final MethodHandle writer;
+			try
+			{
+				writer = MethodHandles.insertArguments(
+					MethodHandles.lookup().unreflect(method).bindTo(UNSAFE), 1, bound
+				)
+					.asType(MethodType.methodType(void.class, Object.class, Object.class))
+				;
+			}
+			catch(final IllegalAccessException e)
+			{
+				throw new BinaryPersistenceException("Cannot write field " + field + ".", e);
+			}
+
+			return (owner, value) ->
+			{
+				try
+				{
+					writer.invokeExact(owner, value);
+				}
+				catch(final RuntimeException | Error e)
+				{
+					throw e;
+				}
+				catch(final Throwable t)
+				{
+					throw new BinaryPersistenceException("Failed to write field " + field + ".", t);
+				}
+			};
 		}
 
 		private static Object invoke(final Method method, final Field field, final Object... arguments)

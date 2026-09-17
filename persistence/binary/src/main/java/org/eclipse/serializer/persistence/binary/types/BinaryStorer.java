@@ -728,7 +728,8 @@ public interface BinaryStorer extends PersistenceStorer, PersistenceStoringCallb
 					}
 
 					// value items may not be merged into the registry, see #isValueClassType.
-					if(e.typeHandler != null && e.typeHandler.isValueClassType())
+					// the handler is non-null here, a null one being the skip criterion checked above.
+					if(e.typeHandler.isValueClassType())
 					{
 						continue;
 					}
